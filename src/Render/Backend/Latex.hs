@@ -57,7 +57,8 @@ render (RenderRequest {..}) = do
   baseEnv <- getEnvironment
   let inherited = fromMaybe "" (lookup "TEXINPUTS" baseEnv)
       texinputs = overlayDir <> "//:" <> (if null inherited then "" else inherited)
-      env = [("TEXINPUTS", texinputs), ("LC_ALL", "C")] <> filter ((`notElem` ["TEXINPUTS", "LC_ALL"]) . fst) baseEnv
+      overrides = [("TEXINPUTS", texinputs), ("LC_ALL", "C"), ("SOURCE_DATE_EPOCH", show requestEpoch), ("FORCE_SOURCE_DATE", "1")]
+      env = overrides <> filter ((`notElem` map fst overrides) . fst) baseEnv
       common = ["-interaction=nonstopmode", "-halt-on-error", "-file-line-error", "-recorder", "-jobname=" <> job]
       (exe, args) = case requestSettle of
         True -> ("latexmk", [engineFlag engine, "-outdir=" <> outDir] <> common <> [srcDir </> entryFile])

@@ -1,12 +1,12 @@
-# render-server
+# lsp-export-server
 
 A language server that renders documents from the buffers a client sends it, and streams the
 result back as xdelta3 diffs. The codedown runner uses it for live exports: an edit reaches the
 server as `didChange` and a new render comes back without a trip through the disk.
 
 ```
-render-server serve --backend latex -o engine=pdflatex     # the LSP, on stdio
-render-server render --backend latex input.tex output.pdf  # once, from disk
+lsp-export-server serve --backend latex -o engine=pdflatex     # the LSP, on stdio
+lsp-export-server render --backend latex input.tex output.pdf  # once, from disk
 ```
 
 Commands (`workspace/executeCommand`): `codedown.render.start`, `codedown.render.stop`,

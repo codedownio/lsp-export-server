@@ -23,6 +23,8 @@ data RenderRequest = RenderRequest {
   , requestOptions :: Map Text Text
   -- | A full build (cross-references settled) rather than a quick single pass
   , requestSettle :: Bool
+  -- | Unix time stamped into the output, kept fixed so unchanged input gives unchanged bytes
+  , requestEpoch :: Integer
   , requestLog :: LogStream -> Text -> IO ()
   }
 

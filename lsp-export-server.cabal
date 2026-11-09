@@ -4,11 +4,11 @@ cabal-version: 2.2
 --
 -- see: https://github.com/sol/hpack
 
-name:           render-server
-version:        0.1.0.0
+name:           lsp-export-server
+version:        0.2.0.0
 synopsis:       A language server that renders documents from their in-memory buffers
-homepage:       https://github.com/codedownio/render-server#readme
-bug-reports:    https://github.com/codedownio/render-server/issues
+homepage:       https://github.com/codedownio/lsp-export-server#readme
+bug-reports:    https://github.com/codedownio/lsp-export-server/issues
 license:        BSD-3-Clause
 build-type:     Simple
 extra-source-files:
@@ -33,7 +33,7 @@ extra-source-files:
 
 source-repository head
   type: git
-  location: https://github.com/codedownio/render-server
+  location: https://github.com/codedownio/lsp-export-server
 
 library
   exposed-modules:
@@ -44,9 +44,9 @@ library
       Render.Server
       Render.Xdelta
   other-modules:
-      Paths_render_server
+      Paths_lsp_export_server
   autogen-modules:
-      Paths_render_server
+      Paths_lsp_export_server
   hs-source-dirs:
       src
   default-extensions:
@@ -90,12 +90,12 @@ library
     , unliftio
   default-language: Haskell2010
 
-executable render-server
+executable lsp-export-server
   main-is: Main.hs
   other-modules:
-      Paths_render_server
+      Paths_lsp_export_server
   autogen-modules:
-      Paths_render_server
+      Paths_lsp_export_server
   hs-source-dirs:
       app
   default-extensions:
@@ -121,20 +121,21 @@ executable render-server
     , containers
     , directory
     , filepath
+    , lsp-export-server
     , optparse-applicative
-    , render-server
     , temporary
     , text
+    , time
     , unliftio
   default-language: Haskell2010
 
-test-suite render-server-test
+test-suite lsp-export-server-test
   type: exitcode-stdio-1.0
   main-is: Main.hs
   other-modules:
-      Paths_render_server
+      Paths_lsp_export_server
   autogen-modules:
-      Paths_render_server
+      Paths_lsp_export_server
   hs-source-dirs:
       test
   default-extensions:
@@ -158,7 +159,7 @@ test-suite render-server-test
     , base >=4.7 && <5
     , bytestring
     , containers
-    , render-server
+    , lsp-export-server
     , sandwich
     , text
     , unliftio

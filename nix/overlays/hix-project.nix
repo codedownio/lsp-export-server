@@ -16,7 +16,7 @@ final: prev: {
         packages.file-io.components.library.configureFlags = [''-f os-string''];
         packages.process.components.library.configureFlags = [''-f os-string''];
 
-        packages.render-server.components.exes.render-server.dontStrip = false;
+        packages.lsp-export-server.components.exes.lsp-export-server.dontStrip = false;
       } (
         prev.lib.optionalAttrs prev.stdenv.isDarwin (import ../macos-modules.nix { pkgs = prev; })
       )];

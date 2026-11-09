@@ -20,7 +20,7 @@ jobs:
 
     - name: Run tests
       run: |
-        TESTS=$(nix build --no-link --print-out-paths .#tests)/bin/render-server-test
+        TESTS=$(nix build --no-link --print-out-paths .#tests)/bin/lsp-export-server-test
         "$TESTS" --print
 
   no-gmp:

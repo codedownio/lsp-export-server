@@ -31,10 +31,10 @@
         flakeAarch64Linux = (pkgs.pkgsCross.aarch64-multiplatform.hixProject compiler-nix-name).flake {};
         flakeStaticAarch64Linux = (pkgs.pkgsCross.aarch64-multiplatform-musl.hixProject compiler-nix-name).flake {};
 
-        aarch64LinuxExe = flakeAarch64Linux.packages."render-server:exe:render-server";
+        aarch64LinuxExe = flakeAarch64Linux.packages."lsp-export-server:exe:lsp-export-server";
 
-        packageForGitHub' = systemToUse: rs: pkgs.runCommand "render-server-${rs.version}-${systemToUse}" {} ''
-          name="render-server-${rs.version}-${systemToUse}"
+        packageForGitHub' = systemToUse: rs: pkgs.runCommand "lsp-export-server-${rs.version}-${systemToUse}" {} ''
+          name="lsp-export-server-${rs.version}-${systemToUse}"
 
           mkdir -p to_zip
           cp -r ${rs}/* to_zip
@@ -60,20 +60,20 @@
 
             default = static;
 
-            static = flakeStatic.packages."render-server:exe:render-server";
-            dynamic = flake.packages."render-server:exe:render-server";
-            darwin = flakeDarwin.packages."render-server:exe:render-server";
+            static = flakeStatic.packages."lsp-export-server:exe:lsp-export-server";
+            dynamic = flake.packages."lsp-export-server:exe:lsp-export-server";
+            darwin = flakeDarwin.packages."lsp-export-server:exe:lsp-export-server";
             aarch64Linux = let
               executable = aarch64LinuxExe;
             in linux-dynamic-bundler.lib.bundle {
               inherit pkgs;
               binaryDrv = executable;
-              binaryName = "render-server";
+              binaryName = "lsp-export-server";
             };
-            staticAarch64Linux = flakeStaticAarch64Linux.packages."render-server:exe:render-server";
+            staticAarch64Linux = flakeStaticAarch64Linux.packages."lsp-export-server:exe:lsp-export-server";
 
             grandCombinedGithubArtifacts = pkgs.symlinkJoin {
-              name = "render-server-grand-combined-artifacts";
+              name = "lsp-export-server-grand-combined-artifacts";
               paths = [
                 (packageForGitHub' "x86_64-linux" self.packages.x86_64-linux.static)
                 (packageForGitHub' "aarch64-linux" aarch64Linux)
@@ -84,28 +84,28 @@
 
             # No GMP (we test the dynamic builds to make sure GMP doesn't end up in the static builds)
             verify-no-gmp = pkgs.writeShellScriptBin "verify-no-gmp.sh" ''
-              echo "Checking for libgmp in ${dynamic}/bin/render-server"
-              (echo "$(ldd ${dynamic}/bin/render-server)" | grep libgmp) && exit 1
+              echo "Checking for libgmp in ${dynamic}/bin/lsp-export-server"
+              (echo "$(ldd ${dynamic}/bin/lsp-export-server)" | grep libgmp) && exit 1
 
               exit 0
             '';
 
             gcroots = let
               # Our own components rebuild on any source change, so only the deps are worth rooting.
-              inputsOf = d: pkgs.lib.filter (p: !(pkgs.lib.hasInfix "render-server" (p.name or "")))
+              inputsOf = d: pkgs.lib.filter (p: !(pkgs.lib.hasInfix "lsp-export-server" (p.name or "")))
                               (d.buildInputs ++ d.nativeBuildInputs);
               # The cross builds can't be made from darwin, where the native build is what matters.
               hostInputs = if pkgs.stdenv.hostPlatform.isDarwin
                            then inputsOf dynamic
                            else inputsOf dynamic ++ inputsOf static ++ inputsOf aarch64LinuxExe;
-            in pkgs.writeText "render-server-gc-roots" ''
+            in pkgs.writeText "lsp-export-server-gc-roots" ''
               ${pkgs.symlinkJoin {
-                name = "render-server-deps";
+                name = "lsp-export-server-deps";
                 paths = pkgs.lib.unique (hostInputs ++ devShellInputs);
               }}
             '';
 
-            tests = flake.packages."render-server:test:render-server-test";
+            tests = flake.packages."lsp-export-server:test:lsp-export-server-test";
 
             nixpkgsPath = pkgs.writeShellScriptBin "nixpkgsPath.sh" "echo -n ${pkgs.path}";
           });

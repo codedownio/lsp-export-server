@@ -3,6 +3,7 @@ module Main (main) where
 import qualified Data.ByteString as B
 import qualified Data.Map as M
 import Data.Text (Text)
+import Data.Time.Clock.POSIX (getPOSIXTime)
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import Options.Applicative
@@ -56,7 +57,7 @@ main = do
     Serve common -> do
       backend <- pickBackend common
       tmp <- getCanonicalTemporaryDirectory
-      withTempDirectory tmp "render-server" $ \workRoot ->
+      withTempDirectory tmp "lsp-export-server" $ \workRoot ->
         runRenderServer backend workRoot (M.fromList (commonOptions common)) >>= \case
           0 -> return ()
           n -> exitWith (ExitFailure n)
@@ -65,7 +66,8 @@ main = do
       inputPath <- makeAbsolute input
       text <- T.readFile inputPath
       tmp <- getCanonicalTemporaryDirectory
-      withTempDirectory tmp "render-server" $ \workDir -> do
+      epoch <- round <$> getPOSIXTime
+      withTempDirectory tmp "lsp-export-server" $ \workDir -> do
         result <- try $ backendRender backend RenderRequest {
           requestEntryPath = inputPath
           , requestEntryText = text
@@ -73,6 +75,7 @@ main = do
           , requestWorkDir = workDir
           , requestOptions = M.fromList (commonOptions common)
           , requestSettle = True
+          , requestEpoch = epoch
           , requestLog = \stream line -> T.hPutStrLn (if stream == LogStdout then stdout else stderr) line
           }
         case result of

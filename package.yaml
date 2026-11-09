@@ -1,8 +1,8 @@
-name:                render-server
-version:             0.1.0.0
+name:                lsp-export-server
+version:             0.2.0.0
 synopsis:            A language server that renders documents from their in-memory buffers
 license:             BSD-3-Clause
-github:              codedownio/render-server
+github:              codedownio/lsp-export-server
 
 extra-source-files:
 - README.md
@@ -58,7 +58,7 @@ library:
   - unix
 
 executables:
-  render-server:
+  lsp-export-server:
     main: Main.hs
     source-dirs:
     - app
@@ -72,11 +72,12 @@ executables:
     - directory
     - filepath
     - optparse-applicative
-    - render-server
+    - lsp-export-server
     - temporary
+    - time
 
 tests:
-  render-server-test:
+  lsp-export-server-test:
     main: Main.hs
     source-dirs:
     - test
@@ -86,5 +87,5 @@ tests:
     - -with-rtsopts=-N
     - -W
     dependencies:
-    - render-server
+    - lsp-export-server
     - sandwich

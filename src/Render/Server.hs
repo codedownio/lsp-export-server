@@ -25,6 +25,7 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.Text.IO as T
 import Data.Time
+import Data.Time.Clock.POSIX (getPOSIXTime)
 import qualified Language.LSP.Protocol.Lens as L
 import Language.LSP.Protocol.Message
 import Language.LSP.Protocol.Types
@@ -47,6 +48,7 @@ data Task = Task {
   , taskEntryUri :: NormalizedUri
   , taskOptions :: Map Text Text
   , taskDebounceMs :: Int
+  , taskEpoch :: Integer
   , taskWorkDir :: FilePath
   , taskDirty :: TVar Bool
   , taskPaused :: TVar Bool
@@ -168,14 +170,15 @@ startTask env (StartParams {..}) = do
 
   let workDir = envWorkRoot env </> T.unpack (T.map safeChar startTaskId)
   createDirectoryIfMissing True workDir
+  epoch <- round <$> getPOSIXTime
   task <- Task startTaskId path (toNormalizedUri (Uri startUri)) (M.union startOptions (envDefaultOptions env))
-            (fromMaybe 100 startDebounceMs) workDir
+            (fromMaybe 100 startDebounceMs) epoch workDir
             <$> newTVarIO True <*> newTVarIO False <*> newTVarIO False <*> newTVarIO (S.singleton path)
             <*> newTVarIO Nothing <*> newTVarIO Nothing <*> newTVarIO 1 <*> newTVarIO Nothing
   atomically $ modifyTVar' (envTasks env) (M.insert startTaskId task)
   worker <- async (runWorker env task)
   atomically $ writeTVar (taskWorker task) (Just worker)
-  logLine [i|started task #{startTaskId} for #{path}|]
+  logLine [i|started task #{startTaskId} for #{path} (debounce #{taskDebounceMs task}ms)|]
   return (StartResult startTaskId)
   where
     safeChar c | c `elem` ['a'..'z'] || c `elem` ['A'..'Z'] || c `elem` ['0'..'9'] || c `elem` ("-_" :: String) = c
@@ -226,6 +229,7 @@ renderOnce env task settle = do
         , requestWorkDir = taskWorkDir task
         , requestOptions = taskOptions task
         , requestSettle = settle
+        , requestEpoch = taskEpoch task
         , requestLog = \stream text -> sendLog env task stream text False
         }
   outcome <- race (atomically (readTVar (taskDirty task) >>= check)) (try (backendRender (envBackend env) request))
@@ -243,7 +247,7 @@ renderOnce env task settle = do
       sendStatus env task StatusErrored (Just code) (Just ms) []
       return False
     Right (Right result) -> do
-      publish env task result version ms
+      publish env task result (map fst overlays) version ms
       sendStatus env task StatusReady Nothing (Just ms) (resultTimings result)
       return True
 
@@ -266,15 +270,15 @@ snapshotBuffers env task = readTVarIO (envLsp env) >>= \case
       text <- T.readFile (taskEntryPath task)
       return (text, Nothing, [])
 
-publish :: ServerEnv -> Task -> RenderResult -> Maybe Int32 -> Double -> IO ()
-publish env task (RenderResult {..}) version ms = do
+-- The deps a client should watch on disk leave out the buffers it sends us itself
+publish :: ServerEnv -> Task -> RenderResult -> [FilePath] -> Maybe Int32 -> Double -> IO ()
+publish env task (RenderResult {..}) overlayPaths version ms = do
   resync <- atomically (swapTVar (taskResync task) False)
   lastOutput <- readTVarIO (taskLast task)
   encoded <- case lastOutput of
+    Just (_, baseBytes) | not resync, baseBytes == resultBytes -> return Nothing
     Just (baseId, baseBytes) | not resync -> Xdelta.encode resultBytes baseBytes >>= \case
-      Right patch
-        | B.null patch -> return Nothing
-        | otherwise -> return (Just (EncodingXdelta3, Just baseId, patch))
+      Right patch -> return (Just (EncodingXdelta3, Just baseId, patch))
       Left err -> do
         logLine [i|xdelta3 failed, sending a full output: #{err}|]
         return (Just (EncodingFull, Nothing, resultBytes))
@@ -292,7 +296,7 @@ publish env task (RenderResult {..}) version ms = do
         , outputBaseRenderId = baseId
         , outputDocumentVersion = version
         , outputFiles = [OutputFile resultFileName encoding (T.decodeUtf8 (B64.encode bytes)) (B.length resultBytes)]
-        , outputDeps = resultDeps
+        , outputDeps = filter (`notElem` (taskEntryPath task : overlayPaths)) resultDeps
         , outputRenderMs = ms
         , outputTimings = resultTimings
         }
@@ -314,4 +318,4 @@ send env method params = readTVarIO (envLsp env) >>= \case
     _ -> return ()
 
 logLine :: Text -> IO ()
-logLine = hPutStrLn stderr . T.unpack . ("render-server: " <>)
+logLine = hPutStrLn stderr . T.unpack . ("lsp-export-server: " <>)
