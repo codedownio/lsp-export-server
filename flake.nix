@@ -1,0 +1,125 @@
+{
+  inputs.flake-utils.url = "github:numtide/flake-utils";
+  inputs.haskellNix.url = "github:input-output-hk/haskell.nix/1dde0b46d3daa5bf0ff3ea6332d579a1943b4a0c";
+  inputs.gitignore = {
+    url = "github:hercules-ci/gitignore.nix";
+    inputs.nixpkgs.follows = "nixpkgs";
+  };
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/7993f34ee47e28a3d607a525aadc6c94b73be728";
+  inputs.linux-dynamic-bundler.url = "github:codedownio/linux-dynamic-bundler";
+
+  outputs = { self, flake-utils, gitignore, haskellNix, nixpkgs, linux-dynamic-bundler }:
+    flake-utils.lib.eachSystem ["x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin"] (system:
+      let
+        compiler-nix-name = "ghc9124";
+
+        overlays = [
+          haskellNix.overlay
+
+          # Set enableNativeBignum flag on compiler
+          (import ./nix/overlays/native-bignum.nix { inherit compiler-nix-name; })
+
+          # Configure hixProject
+          (import ./nix/overlays/hix-project.nix { inherit compiler-nix-name gitignore system; })
+        ];
+
+        pkgs = import nixpkgs { inherit system overlays; inherit (haskellNix) config; };
+
+        flake = (pkgs.hixProject compiler-nix-name).flake {};
+        flakeStatic = (pkgs.pkgsCross.musl64.hixProject compiler-nix-name).flake {};
+        flakeDarwin = (pkgs.pkgsCross.aarch64-darwin.hixProject compiler-nix-name).flake {};
+        flakeAarch64Linux = (pkgs.pkgsCross.aarch64-multiplatform.hixProject compiler-nix-name).flake {};
+        flakeStaticAarch64Linux = (pkgs.pkgsCross.aarch64-multiplatform-musl.hixProject compiler-nix-name).flake {};
+
+        aarch64LinuxExe = flakeAarch64Linux.packages."render-server:exe:render-server";
+
+        packageForGitHub' = systemToUse: rs: pkgs.runCommand "render-server-${rs.version}-${systemToUse}" {} ''
+          name="render-server-${rs.version}-${systemToUse}"
+
+          mkdir -p to_zip
+          cp -r ${rs}/* to_zip
+          mkdir -p $out
+          tar -czvf $out/$name.tar.gz -C to_zip .
+        '';
+
+        devShellInputs = with pkgs; [
+          haskell.compiler.ghc9124
+        ];
+
+      in
+        {
+          devShells = {
+            default = pkgs.mkShell {
+              NIX_PATH = "nixpkgs=${pkgs.path}";
+              buildInputs = devShellInputs;
+            };
+          };
+
+          packages = (rec {
+            inherit (pkgs) cabal2nix stack;
+
+            default = static;
+
+            static = flakeStatic.packages."render-server:exe:render-server";
+            dynamic = flake.packages."render-server:exe:render-server";
+            darwin = flakeDarwin.packages."render-server:exe:render-server";
+            aarch64Linux = let
+              executable = aarch64LinuxExe;
+            in linux-dynamic-bundler.lib.bundle {
+              inherit pkgs;
+              binaryDrv = executable;
+              binaryName = "render-server";
+            };
+            staticAarch64Linux = flakeStaticAarch64Linux.packages."render-server:exe:render-server";
+
+            grandCombinedGithubArtifacts = pkgs.symlinkJoin {
+              name = "render-server-grand-combined-artifacts";
+              paths = [
+                (packageForGitHub' "x86_64-linux" self.packages.x86_64-linux.static)
+                (packageForGitHub' "aarch64-linux" aarch64Linux)
+                (packageForGitHub' "x86_64-darwin" self.packages.x86_64-darwin.dynamic)
+                (packageForGitHub' "aarch64-darwin" self.packages.aarch64-darwin.dynamic)
+              ];
+            };
+
+            # No GMP (we test the dynamic builds to make sure GMP doesn't end up in the static builds)
+            verify-no-gmp = pkgs.writeShellScriptBin "verify-no-gmp.sh" ''
+              echo "Checking for libgmp in ${dynamic}/bin/render-server"
+              (echo "$(ldd ${dynamic}/bin/render-server)" | grep libgmp) && exit 1
+
+              exit 0
+            '';
+
+            gcroots = let
+              # Our own components rebuild on any source change, so only the deps are worth rooting.
+              inputsOf = d: pkgs.lib.filter (p: !(pkgs.lib.hasInfix "render-server" (p.name or "")))
+                              (d.buildInputs ++ d.nativeBuildInputs);
+              # The cross builds can't be made from darwin, where the native build is what matters.
+              hostInputs = if pkgs.stdenv.hostPlatform.isDarwin
+                           then inputsOf dynamic
+                           else inputsOf dynamic ++ inputsOf static ++ inputsOf aarch64LinuxExe;
+            in pkgs.writeText "render-server-gc-roots" ''
+              ${pkgs.symlinkJoin {
+                name = "render-server-deps";
+                paths = pkgs.lib.unique (hostInputs ++ devShellInputs);
+              }}
+            '';
+
+            tests = flake.packages."render-server:test:render-server-test";
+
+            nixpkgsPath = pkgs.writeShellScriptBin "nixpkgsPath.sh" "echo -n ${pkgs.path}";
+          });
+
+          inherit flake;
+        }
+    );
+
+  # nixConfig = {
+  #   # This sets the flake to use the IOG nix cache.
+  #   # Nix should ask for permission before using it,
+  #   # but remove it here if you do not want it to.
+  #   extra-substituters = ["https://cache.iog.io"];
+  #   extra-trusted-public-keys = ["hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ="];
+  #   allow-import-from-derivation = "true";
+  # };
+}

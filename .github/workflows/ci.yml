@@ -1,0 +1,52 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  tests:
+    name: tests
+    runs-on: arc-public-medium
+    strategy:
+      fail-fast: false
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: ./.github/actions/arc_env
+
+    - name: Run tests
+      run: |
+        TESTS=$(nix build --no-link --print-out-paths .#tests)/bin/render-server-test
+        "$TESTS" --print
+
+  no-gmp:
+    runs-on: arc-public-small
+    strategy:
+      fail-fast: false
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: ./.github/actions/arc_env
+
+    - name: No GMP
+      run: |
+        nix run .#verify-no-gmp
+
+  nix:
+    name: Nix
+    runs-on: arc-public-small
+    strategy:
+      fail-fast: false
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: ./.github/actions/arc_env
+
+    - name: Build
+      run: |
+        nix build

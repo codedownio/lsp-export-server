@@ -1,0 +1,8 @@
+.stack-work/
+*~
+test_runs/
+result
+.direnv
+gcroots
+gcroots-*
+.scratch/

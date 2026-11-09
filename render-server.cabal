@@ -1,0 +1,165 @@
+cabal-version: 2.2
+
+-- This file has been generated from package.yaml by hpack version 0.39.1.
+--
+-- see: https://github.com/sol/hpack
+
+name:           render-server
+version:        0.1.0.0
+synopsis:       A language server that renders documents from their in-memory buffers
+homepage:       https://github.com/codedownio/render-server#readme
+bug-reports:    https://github.com/codedownio/render-server/issues
+license:        BSD-3-Clause
+build-type:     Simple
+extra-source-files:
+    README.md
+    CHANGELOG.md
+    cbits/config.h
+    cbits/xdelta3-blkcache.h
+    cbits/xdelta3-cfgs.h
+    cbits/xdelta3-decode.h
+    cbits/xdelta3-djw.h
+    cbits/xdelta3-fgk.h
+    cbits/xdelta3-hash.h
+    cbits/xdelta3-internal.h
+    cbits/xdelta3-list.h
+    cbits/xdelta3-lzma.h
+    cbits/xdelta3-main.h
+    cbits/xdelta3-merge.h
+    cbits/xdelta3-second.h
+    cbits/xdelta3-test.h
+    cbits/xdelta3.h
+    cbits/LICENSE
+
+source-repository head
+  type: git
+  location: https://github.com/codedownio/render-server
+
+library
+  exposed-modules:
+      Render.Backend
+      Render.Backend.Latex
+      Render.Process
+      Render.Protocol
+      Render.Server
+      Render.Xdelta
+  other-modules:
+      Paths_render_server
+  autogen-modules:
+      Paths_render_server
+  hs-source-dirs:
+      src
+  default-extensions:
+      OverloadedStrings
+      QuasiQuotes
+      NamedFieldPuns
+      RecordWildCards
+      ScopedTypeVariables
+      FlexibleContexts
+      FlexibleInstances
+      LambdaCase
+      ViewPatterns
+      MultiWayIf
+      TupleSections
+      NumericUnderscores
+      TypeApplications
+      DataKinds
+  ghc-options: -Wunused-packages -Wall -fno-warn-name-shadowing
+  cc-options: -std=c11 -DHAVE_CONFIG_H
+  include-dirs:
+      cbits
+  c-sources:
+      cbits/xdelta3.c
+  build-depends:
+      aeson
+    , base >=4.7 && <5
+    , base64-bytestring
+    , bytestring
+    , containers
+    , directory
+    , filepath
+    , lens
+    , lsp
+    , lsp-types
+    , process
+    , stm
+    , string-interpolate
+    , text
+    , time
+    , unix
+    , unliftio
+  default-language: Haskell2010
+
+executable render-server
+  main-is: Main.hs
+  other-modules:
+      Paths_render_server
+  autogen-modules:
+      Paths_render_server
+  hs-source-dirs:
+      app
+  default-extensions:
+      OverloadedStrings
+      QuasiQuotes
+      NamedFieldPuns
+      RecordWildCards
+      ScopedTypeVariables
+      FlexibleContexts
+      FlexibleInstances
+      LambdaCase
+      ViewPatterns
+      MultiWayIf
+      TupleSections
+      NumericUnderscores
+      TypeApplications
+      DataKinds
+  ghc-options: -Wunused-packages -Wall -fno-warn-name-shadowing -threaded -rtsopts -with-rtsopts=-N -O2 -W
+  build-depends:
+      aeson
+    , base >=4.7 && <5
+    , bytestring
+    , containers
+    , directory
+    , filepath
+    , optparse-applicative
+    , render-server
+    , temporary
+    , text
+    , unliftio
+  default-language: Haskell2010
+
+test-suite render-server-test
+  type: exitcode-stdio-1.0
+  main-is: Main.hs
+  other-modules:
+      Paths_render_server
+  autogen-modules:
+      Paths_render_server
+  hs-source-dirs:
+      test
+  default-extensions:
+      OverloadedStrings
+      QuasiQuotes
+      NamedFieldPuns
+      RecordWildCards
+      ScopedTypeVariables
+      FlexibleContexts
+      FlexibleInstances
+      LambdaCase
+      ViewPatterns
+      MultiWayIf
+      TupleSections
+      NumericUnderscores
+      TypeApplications
+      DataKinds
+  ghc-options: -Wunused-packages -Wall -fno-warn-name-shadowing -threaded -rtsopts -with-rtsopts=-N -W
+  build-depends:
+      aeson
+    , base >=4.7 && <5
+    , bytestring
+    , containers
+    , render-server
+    , sandwich
+    , text
+    , unliftio
+  default-language: Haskell2010
