@@ -9,6 +9,7 @@
     fix_dylib "$out/bin/lsp-export-server" libpcre.1.dylib libpcre.dylib
     fix_dylib "$out/bin/lsp-export-server" libc++.1.0.dylib libc++.dylib
     fix_dylib "$out/bin/lsp-export-server" libc++abi.1.0.dylib libc++abi.dylib
+    fix_dylib "$out/bin/lsp-export-server" libz.dylib libz.1.dylib
     check_no_nix_refs "$out/bin/lsp-export-server"
 
     strip "$out/bin/lsp-export-server"
