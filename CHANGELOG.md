@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.1.2
+
+- Release artifacts for aarch64-linux, x86_64-darwin and aarch64-darwin alongside x86_64-linux.
+
 ## 0.4.1.1
 
 - A rebuild request before any dependency is known no longer restarts the first render.
