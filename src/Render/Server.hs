@@ -146,10 +146,9 @@ executeCommand env cmd args
       -- A rebuild is only worth doing when some dependency's content actually changed
       known <- readTVarIO (taskDepHashes task)
       changed <- filterM (\(path, h) -> (/= h) <$> hashFile path) (M.toList known)
-      case (M.null known, changed) of
-        (True, _) -> markDirty task "rebuild requested by the client"
-        (False, []) -> logLine [i|rebuild of #{taskId task} requested, but no dependency changed on disk|]
-        (False, _) -> markDirty task [i|#{T.intercalate ", " [T.pack (takeFileName p) | (p, _) <- changed]} changed on disk|]
+      case changed of
+        [] -> logLine [i|rebuild of #{taskId task} requested, but no known dependency changed on disk|]
+        _ -> markDirty task [i|#{T.intercalate ", " [T.pack (takeFileName p) | (p, _) <- changed]} changed on disk|]
   | cmd == commandSetPaused = case args of
       [tid, pausedV] | Success (tid' :: Text) <- fromJSON tid, Success (paused :: Bool) <- fromJSON pausedV ->
         lookupTask tid' >>= mapM_ (\task -> atomically (writeTVar (taskPaused task) paused)) >> return Nothing

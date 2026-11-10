@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.1.1
+
+- A rebuild request before any dependency is known no longer restarts the first render.
+
 ## 0.4.1.0
 
 - A `pandoc` backend: pandoc converts the buffer, and the LaTeX-based writers go through the LaTeX backend's quick and settle passes.
