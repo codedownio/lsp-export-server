@@ -1,5 +1,7 @@
 module Render.Backend.Latex (
   latexBackend
+  , prepareWorkDir
+  , compileTex
   , depsFromFls
   ) where
 
@@ -28,20 +30,23 @@ import UnliftIO (throwIO)
 latexBackend :: Backend
 latexBackend = Backend {
   backendName = "latex"
-  , backendRender = render
+  , backendRender = \req -> do
+      srcDir <- prepareWorkDir req
+      compileTex req (srcDir </> takeFileName (requestEntryPath req))
   }
 
-render :: RenderRequest -> IO RenderResult
-render (RenderRequest {..}) = do
+-- | Lay out the work directory: the entry buffer under @src/@, the other open buffers under
+-- @overlay/@ at their paths relative to the entry's directory, and an @out/@ for the build.
+-- Returns the @src/@ directory.
+prepareWorkDir :: RenderRequest -> IO FilePath
+prepareWorkDir (RenderRequest {..}) = do
   let entryDir = takeDirectory requestEntryPath
-      entryFile = takeFileName requestEntryPath
-      job = dropExtension entryFile
       srcDir = requestWorkDir </> "src"
       overlayDir = requestWorkDir </> "overlay"
       outDir = requestWorkDir </> "out"
 
   forM_ [srcDir, outDir] (createDirectoryIfMissing True)
-  T.writeFile (srcDir </> entryFile) requestEntryText
+  T.writeFile (srcDir </> takeFileName requestEntryPath) requestEntryText
 
   doesDirectoryExist overlayDir >>= \case
     True -> removeDirectoryRecursive overlayDir
@@ -53,6 +58,18 @@ render (RenderRequest {..}) = do
       createDirectoryIfMissing True (takeDirectory (overlayDir </> rel))
       T.writeFile (overlayDir </> rel) text
 
+  return srcDir
+
+-- | Compile a @.tex@ file that lives in the work directory's @src/@: one engine pass, or a latexmk
+-- build when settling. The PDF, the recorded dependencies and the timing come back.
+compileTex :: RenderRequest -> FilePath -> IO RenderResult
+compileTex (RenderRequest {..}) texFile = do
+  let entryDir = takeDirectory requestEntryPath
+      job = dropExtension (takeFileName texFile)
+      srcDir = requestWorkDir </> "src"
+      overlayDir = requestWorkDir </> "overlay"
+      outDir = requestWorkDir </> "out"
+
   let engine = T.unpack (fromMaybe "pdflatex" (M.lookup "engine" requestOptions))
   baseEnv <- getEnvironment
   let inherited = fromMaybe "" (lookup "TEXINPUTS" baseEnv)
@@ -61,8 +78,8 @@ render (RenderRequest {..}) = do
       env = overrides <> filter ((`notElem` map fst overrides) . fst) baseEnv
       common = ["-interaction=nonstopmode", "-halt-on-error", "-file-line-error", "-recorder", "-jobname=" <> job]
       (exe, args) = case requestSettle of
-        True -> ("latexmk", [engineFlag engine, "-outdir=" <> outDir] <> common <> [srcDir </> entryFile])
-        False -> (engine, ["-output-directory=" <> outDir] <> common <> [srcDir </> entryFile])
+        True -> ("latexmk", [engineFlag engine, "-outdir=" <> outDir] <> common <> [texFile])
+        False -> (engine, ["-output-directory=" <> outDir] <> common <> [texFile])
 
   requestLog LogStdout (T.pack (unwords (exe : args)))
   start <- getCurrentTime

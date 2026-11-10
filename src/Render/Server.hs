@@ -186,7 +186,8 @@ startTask env (StartParams {..}) = do
   let workDir = envWorkRoot env </> T.unpack (T.map safeChar startTaskId)
   createDirectoryIfMissing True workDir
   epoch <- round <$> getPOSIXTime
-  task <- Task startTaskId path (toNormalizedUri (Uri startUri)) (M.union startOptions (envDefaultOptions env))
+  let options = M.insert "format" startFormat (M.union startOptions (envDefaultOptions env))
+  task <- Task startTaskId path (toNormalizedUri (Uri startUri)) options
             (fromMaybe 100 startDebounceMs) epoch workDir
             <$> newTVarIO True <*> newTVarIO ["task started"] <*> newTVarIO False <*> newTVarIO False <*> newTVarIO (S.singleton path) <*> newTVarIO mempty
             <*> newTVarIO Nothing <*> newTVarIO Nothing <*> newTVarIO 1 <*> newTVarIO Nothing

@@ -9,6 +9,7 @@ import qualified Data.Text.IO as T
 import Options.Applicative
 import Render.Backend
 import Render.Backend.Latex (latexBackend)
+import Render.Backend.Pandoc (pandocBackend)
 import Render.Protocol (LogStream(..))
 import Render.Server (runRenderServer)
 import System.Directory
@@ -20,7 +21,7 @@ import UnliftIO (try)
 
 
 backends :: [Backend]
-backends = [latexBackend]
+backends = [latexBackend, pandocBackend]
 
 data Common = Common {
   commonBackend :: String
@@ -33,7 +34,7 @@ data Command =
 
 commonParser :: Parser Common
 commonParser = Common
-  <$> strOption (long "backend" <> metavar "NAME" <> help "Which backend renders: latex")
+  <$> strOption (long "backend" <> metavar "NAME" <> help "Which backend renders: latex, pandoc")
   <*> many (option (eitherReader keyValue) (long "option" <> short 'o' <> metavar "KEY=VALUE" <> help "A backend option, e.g. engine=xelatex"))
   where
     keyValue s = case break (== '=') s of
@@ -73,7 +74,7 @@ main = do
           , requestEntryText = text
           , requestOverlays = []
           , requestWorkDir = workDir
-          , requestOptions = M.fromList (commonOptions common)
+          , requestOptions = M.insert "format" (T.pack (drop 1 (takeExtension output))) (M.fromList (commonOptions common))
           , requestSettle = True
           , requestEpoch = epoch
           , requestLog = \stream line -> T.hPutStrLn (if stream == LogStdout then stdout else stderr) line

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.1.0
+
+- A `pandoc` backend: pandoc converts the buffer, and the LaTeX-based writers go through the LaTeX backend's quick and settle passes.
+- Tasks and one-shot renders see the output extension as the `format` option.
+
 ## 0.4.0.0
 
 - A rebuild request only renders when some on-disk dependency's content changed; the reason names the files.
