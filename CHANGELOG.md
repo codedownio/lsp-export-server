@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.0.0
+
+- A rebuild request only renders when some on-disk dependency's content changed; the reason names the files.
+- The settle pass is silent in the log unless it fails or changes the output.
+
 ## 0.3.0.0
 
 - Statuses carry the pass (`phase`: quick or settle) and the `reason` the render ran.

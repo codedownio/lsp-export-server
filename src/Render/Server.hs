@@ -8,6 +8,7 @@ import Control.Lens ((^.))
 import Control.Monad
 import Control.Monad.IO.Class
 import Control.Monad.STM (check)
+import qualified Crypto.Hash.SHA256 as SHA256
 import Data.Aeson (Result(..), Value, fromJSON, toJSON)
 import qualified Data.Aeson as A
 import qualified Data.ByteString as B
@@ -15,7 +16,7 @@ import qualified Data.ByteString.Base64 as B64
 import Data.Int (Int32)
 import Data.Map (Map)
 import qualified Data.Map as M
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, isJust)
 import Data.Proxy
 import Data.Set (Set)
 import qualified Data.Set as S
@@ -56,6 +57,8 @@ data Task = Task {
   , taskPaused :: TVar Bool
   , taskResync :: TVar Bool
   , taskDeps :: TVar (Set FilePath)
+  -- | Content hashes of the on-disk dependencies as of the last render
+  , taskDepHashes :: TVar (Map FilePath (Maybe B.ByteString))
   , taskVersion :: TVar (Maybe Int32)
   -- | The last output announced: its render id and bytes, the base for the next diff
   , taskLast :: TVar (Maybe (Int, B.ByteString))
@@ -139,7 +142,14 @@ executeCommand env cmd args
       [v] | Success (params :: StartParams) <- fromJSON v -> Just . toJSON <$> startTask env params
       _ -> bad "expected [StartParams]"
   | cmd == commandStop = withTaskArg $ \task -> stopTask env task
-  | cmd == commandRebuild = withTaskArg $ \task -> markDirty task "rebuild requested by the client"
+  | cmd == commandRebuild = withTaskArg $ \task -> do
+      -- A rebuild is only worth doing when some dependency's content actually changed
+      known <- readTVarIO (taskDepHashes task)
+      changed <- filterM (\(path, h) -> (/= h) <$> hashFile path) (M.toList known)
+      case (M.null known, changed) of
+        (True, _) -> markDirty task "rebuild requested by the client"
+        (False, []) -> logLine [i|rebuild of #{taskId task} requested, but no dependency changed on disk|]
+        (False, _) -> markDirty task [i|#{T.intercalate ", " [T.pack (takeFileName p) | (p, _) <- changed]} changed on disk|]
   | cmd == commandSetPaused = case args of
       [tid, pausedV] | Success (tid' :: Text) <- fromJSON tid, Success (paused :: Bool) <- fromJSON pausedV ->
         lookupTask tid' >>= mapM_ (\task -> atomically (writeTVar (taskPaused task) paused)) >> return Nothing
@@ -178,7 +188,7 @@ startTask env (StartParams {..}) = do
   epoch <- round <$> getPOSIXTime
   task <- Task startTaskId path (toNormalizedUri (Uri startUri)) (M.union startOptions (envDefaultOptions env))
             (fromMaybe 100 startDebounceMs) epoch workDir
-            <$> newTVarIO True <*> newTVarIO ["task started"] <*> newTVarIO False <*> newTVarIO False <*> newTVarIO (S.singleton path)
+            <$> newTVarIO True <*> newTVarIO ["task started"] <*> newTVarIO False <*> newTVarIO False <*> newTVarIO (S.singleton path) <*> newTVarIO mempty
             <*> newTVarIO Nothing <*> newTVarIO Nothing <*> newTVarIO 1 <*> newTVarIO Nothing
   atomically $ modifyTVar' (envTasks env) (M.insert startTaskId task)
   worker <- async (runWorker env task)
@@ -235,6 +245,15 @@ renderOnce env task phase = do
       label = case phase of
         PhaseQuick -> "quick render" :: Text
         PhaseSettle -> "settle pass"
+  -- The settle pass stays out of the log unless it fails or changes the output
+  buffered <- newTVarIO ([] :: [(LogStream, Text)])
+  let logFn stream text = case phase of
+        PhaseQuick -> sendLog env task stream text False
+        PhaseSettle -> atomically (modifyTVar' buffered ((stream, text) :))
+      marker text = logFn LogStdout ("── " <> text)
+      flush = do
+        lines' <- reverse <$> atomically (swapTVar buffered [])
+        forM_ lines' $ \(stream, text) -> sendLog env task stream text False
   case phase of
     PhaseQuick -> do
       sendStatus env task StatusRendering phase reason Nothing Nothing []
@@ -250,7 +269,7 @@ renderOnce env task phase = do
         , requestOptions = taskOptions task
         , requestSettle = settle
         , requestEpoch = taskEpoch task
-        , requestLog = \stream text -> sendLog env task stream text False
+        , requestLog = logFn
         }
   outcome <- race (atomically (readTVar (taskDirty task) >>= check)) (try (backendRender (envBackend env) request))
   end <- getCurrentTime
@@ -263,18 +282,22 @@ renderOnce env task phase = do
       let (code, msg) = case fromException e of
             Just (RenderFailure c m) -> (c, m)
             Nothing -> (-1, T.pack (show e))
-      sendLog env task LogStderr msg False
+      logFn LogStderr msg
       marker [i|#{label} failed after #{showMs ms}|]
+      flush
       sendStatus env task StatusErrored phase reason (Just code) (Just ms) []
       return False
     Right (Right result) -> do
-      outcome' <- publish env task result (map fst overlays) version ms
-      marker [i|#{label} done in #{showMs ms}: #{outcome'}|]
+      sent <- publish env task result (map fst overlays) version ms
+      marker [i|#{label} done in #{showMs ms}: #{fromMaybe "output unchanged, nothing sent" sent}|]
+      when (isJust sent) flush
       sendStatus env task StatusReady phase reason Nothing (Just ms) (resultTimings result)
       return True
-  where
-    marker :: Text -> IO ()
-    marker text = sendLog env task LogStdout ("── " <> text) False
+
+hashFile :: FilePath -> IO (Maybe B.ByteString)
+hashFile path = doesFileExist path >>= \case
+  False -> return Nothing
+  True -> Just . SHA256.hash <$> B.readFile path
 
 showMs :: Double -> Text
 showMs ms = T.pack (show (round ms :: Int)) <> "ms"
@@ -298,9 +321,10 @@ snapshotBuffers env task = readTVarIO (envLsp env) >>= \case
       text <- T.readFile (taskEntryPath task)
       return (text, Nothing, [])
 
--- | Send the output, as a diff against the last one where possible, and say what was sent. The deps
--- a client should watch on disk leave out the buffers it sends us itself.
-publish :: ServerEnv -> Task -> RenderResult -> [FilePath] -> Maybe Int32 -> Double -> IO Text
+-- | Send the output, as a diff against the last one where possible, and say what was sent (Nothing
+-- when it was identical to the last one). The deps a client should watch on disk leave out the
+-- buffers it sends us itself.
+publish :: ServerEnv -> Task -> RenderResult -> [FilePath] -> Maybe Int32 -> Double -> IO (Maybe Text)
 publish env task (RenderResult {..}) overlayPaths version ms = do
   resync <- atomically (swapTVar (taskResync task) False)
   lastOutput <- readTVarIO (taskLast task)
@@ -313,9 +337,13 @@ publish env task (RenderResult {..}) overlayPaths version ms = do
         return (Just (EncodingFull, Nothing, resultBytes))
     _ -> return (Just (EncodingFull, Nothing, resultBytes))
 
-  atomically $ writeTVar (taskDeps task) (S.fromList (taskEntryPath task : resultDeps))
+  let diskDeps = filter (`notElem` (taskEntryPath task : overlayPaths)) resultDeps
+  hashes <- M.fromList <$> mapM (\p -> (p,) <$> hashFile p) diskDeps
+  atomically $ do
+    writeTVar (taskDeps task) (S.fromList (taskEntryPath task : resultDeps))
+    writeTVar (taskDepHashes task) hashes
   case encoded of
-    Nothing -> return "output unchanged, nothing sent"
+    Nothing -> return Nothing
     Just (encoding, baseId, bytes) -> do
       renderId <- atomically $ stateTVar (taskNextRenderId task) (\n -> (n, n + 1))
       atomically $ writeTVar (taskLast task) (Just (renderId, resultBytes))
@@ -325,11 +353,11 @@ publish env task (RenderResult {..}) overlayPaths version ms = do
         , outputBaseRenderId = baseId
         , outputDocumentVersion = version
         , outputFiles = [OutputFile resultFileName encoding (T.decodeUtf8 (B64.encode bytes)) (B.length resultBytes)]
-        , outputDeps = filter (`notElem` (taskEntryPath task : overlayPaths)) resultDeps
+        , outputDeps = diskDeps
         , outputRenderMs = ms
         , outputTimings = resultTimings
         }
-      return $ case encoding of
+      return $ Just $ case encoding of
         EncodingFull -> [i|sent the full #{B.length bytes}B output as render #{renderId}|]
         EncodingXdelta3 -> [i|output changed, sent a #{B.length bytes}B diff as render #{renderId}|]
 
