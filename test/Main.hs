@@ -27,8 +27,8 @@ spec = do
 
   describe "protocol" $ do
     it "writes camelCase fields and lower-case tags" $ do
-      let params = StatusParams "t1" StatusErrored (Just 12) Nothing []
-      decode (encode params) `shouldBe` Just (object ["taskId" .= ("t1" :: String), "status" .= ("errored" :: String), "exitCode" .= (12 :: Int), "timings" .= ([] :: [Int])])
+      let params = StatusParams "t1" StatusErrored PhaseQuick (Just "edit to x.tex (v3)") (Just 12) Nothing []
+      decode (encode params) `shouldBe` Just (object ["taskId" .= ("t1" :: String), "status" .= ("errored" :: String), "phase" .= ("quick" :: String), "reason" .= ("edit to x.tex (v3)" :: String), "exitCode" .= (12 :: Int), "timings" .= ([] :: [Int])])
 
     it "reads start params" $ do
       let json = "{\"taskId\":\"a\",\"uri\":\"file:///home/x.tex\",\"format\":\"pdf\",\"options\":{\"engine\":\"xelatex\"},\"debounceMs\":50}"

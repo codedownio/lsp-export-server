@@ -13,4 +13,9 @@ Commands (`workspace/executeCommand`): `codedown.render.start`, `codedown.render
 `codedown.render.rebuild`, `codedown.render.setPaused`, `codedown.render.resync`. Notifications:
 `codedown/render/status`, `codedown/render/output`, `codedown/render/log`. See `src/Render/Protocol.hs`.
 
+Each edit gets a quick single-pass render, then a latexmk settle pass once edits stay quiet; only
+the quick pass reports `rendering`, and an output identical to the last one is not sent. Statuses
+carry the pass (`phase`) and what triggered it (`reason`), and `──` marker lines in the log say
+when each pass started, why, how long it took and what was sent.
+
 `cbits/` is xdelta3, Apache-2.0 (see `cbits/LICENSE`).

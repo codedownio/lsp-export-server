@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.0.0
+
+- Statuses carry the pass (`phase`: quick or settle) and the `reason` the render ran.
+- The settle pass no longer reports `rendering`.
+- Marker lines in the log say when each pass started, why, how long it took and what was sent.
+
 ## 0.2.0.0
 
 - Renamed from render-server.

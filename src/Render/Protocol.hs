@@ -19,6 +19,7 @@ module Render.Protocol (
   , RebuildParams(..)
 
   , Status(..)
+  , Phase(..)
   , StatusParams(..)
   , OutputEncoding(..)
   , OutputFile(..)
@@ -100,9 +101,18 @@ data Status = StatusRendering | StatusReady | StatusErrored
 instance ToJSON Status where toJSON = genericToJSON (tagOptions 6)
 instance FromJSON Status where parseJSON = genericParseJSON (tagOptions 6)
 
+-- | The quick pass runs right after the debounce; the settle pass follows once edits stay quiet
+data Phase = PhaseQuick | PhaseSettle
+  deriving (Show, Eq, Generic)
+instance ToJSON Phase where toJSON = genericToJSON (tagOptions 5)
+instance FromJSON Phase where parseJSON = genericParseJSON (tagOptions 5)
+
 data StatusParams = StatusParams {
   statusTaskId :: Text
   , statusStatus :: Status
+  , statusPhase :: Phase
+  -- | What made the render run, e.g. the edit it answers
+  , statusReason :: Maybe Text
   , statusExitCode :: Maybe Int
   , statusRenderMs :: Maybe Double
   , statusTimings :: [Timing]

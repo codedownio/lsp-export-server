@@ -51,6 +51,8 @@ data Task = Task {
   , taskEpoch :: Integer
   , taskWorkDir :: FilePath
   , taskDirty :: TVar Bool
+  -- | What has made the task dirty since the last render started
+  , taskReasons :: TVar [Text]
   , taskPaused :: TVar Bool
   , taskResync :: TVar Bool
   , taskDeps :: TVar (Set FilePath)
@@ -129,7 +131,7 @@ documentTouched env uri version = case uriToFilePath uri of
       when (path == taskEntryPath task) $
         forM_ version $ \v -> atomically (writeTVar (taskVersion task) (Just v))
       when (path == taskEntryPath task || path `S.member` deps) $
-        atomically (writeTVar (taskDirty task) True)
+        markDirty task [i|edit to #{takeFileName path}#{maybe "" (\v -> " (v" <> show v <> ")") version}|]
 
 executeCommand :: ServerEnv -> Text -> [Value] -> IO (Maybe Value)
 executeCommand env cmd args
@@ -137,14 +139,14 @@ executeCommand env cmd args
       [v] | Success (params :: StartParams) <- fromJSON v -> Just . toJSON <$> startTask env params
       _ -> bad "expected [StartParams]"
   | cmd == commandStop = withTaskArg $ \task -> stopTask env task
-  | cmd == commandRebuild = withTaskArg $ \task -> markDirty task
+  | cmd == commandRebuild = withTaskArg $ \task -> markDirty task "rebuild requested by the client"
   | cmd == commandSetPaused = case args of
       [tid, pausedV] | Success (tid' :: Text) <- fromJSON tid, Success (paused :: Bool) <- fromJSON pausedV ->
         lookupTask tid' >>= mapM_ (\task -> atomically (writeTVar (taskPaused task) paused)) >> return Nothing
       _ -> bad "expected [taskId, bool]"
   | cmd == commandResync = withTaskArg $ \task -> do
       atomically (writeTVar (taskResync task) True)
-      markDirty task
+      markDirty task "full output requested by the client"
   | otherwise = bad [i|unknown command #{cmd}|]
   where
     bad :: Text -> IO a
@@ -158,7 +160,10 @@ executeCommand env cmd args
         return Nothing
       _ -> bad "expected [taskId]"
 
-    markDirty task = atomically (writeTVar (taskDirty task) True)
+markDirty :: Task -> Text -> IO ()
+markDirty task reason = atomically $ do
+  writeTVar (taskDirty task) True
+  modifyTVar' (taskReasons task) (<> [reason])
 
 startTask :: ServerEnv -> StartParams -> IO StartResult
 startTask env (StartParams {..}) = do
@@ -173,7 +178,7 @@ startTask env (StartParams {..}) = do
   epoch <- round <$> getPOSIXTime
   task <- Task startTaskId path (toNormalizedUri (Uri startUri)) (M.union startOptions (envDefaultOptions env))
             (fromMaybe 100 startDebounceMs) epoch workDir
-            <$> newTVarIO True <*> newTVarIO False <*> newTVarIO False <*> newTVarIO (S.singleton path)
+            <$> newTVarIO True <*> newTVarIO ["task started"] <*> newTVarIO False <*> newTVarIO False <*> newTVarIO (S.singleton path)
             <*> newTVarIO Nothing <*> newTVarIO Nothing <*> newTVarIO 1 <*> newTVarIO Nothing
   atomically $ modifyTVar' (envTasks env) (M.insert startTaskId task)
   worker <- async (runWorker env task)
@@ -205,22 +210,37 @@ runWorker env task = forever $ do
   threadDelay (taskDebounceMs task * 1000)
   readTVarIO (taskDirty task) >>= \case
     True -> return ()
-    False -> renderOnce env task False >>= \case
+    False -> renderOnce env task PhaseQuick >>= \case
       False -> return ()
-      True -> quietFor 1500 >>= \case
+      True -> quietFor settleQuietMs >>= \case
         False -> return ()
-        True -> void (renderOnce env task True)
+        True -> void (renderOnce env task PhaseSettle)
   where
     quietFor ms = race (threadDelay (ms * 1000)) (atomically (readTVar (taskDirty task) >>= check)) >>= \case
       Left () -> return True
       Right () -> return False
 
+settleQuietMs :: Int
+settleQuietMs = 1500
+
 -- | One render of the current buffers. False when it was superseded by an edit or failed.
-renderOnce :: ServerEnv -> Task -> Bool -> IO Bool
-renderOnce env task settle = do
+renderOnce :: ServerEnv -> Task -> Phase -> IO Bool
+renderOnce env task phase = do
   (entryText, version, overlays) <- snapshotBuffers env task
-  sendStatus env task StatusRendering Nothing Nothing []
-  sendLog env task LogStdout "" True
+  reasons <- atomically (swapTVar (taskReasons task) [])
+  let reason = case reasons of
+        [] -> Nothing
+        _ -> Just (T.intercalate ", " reasons)
+      settle = phase == PhaseSettle
+      label = case phase of
+        PhaseQuick -> "quick render" :: Text
+        PhaseSettle -> "settle pass"
+  case phase of
+    PhaseQuick -> do
+      sendStatus env task StatusRendering phase reason Nothing Nothing []
+      sendLog env task LogStdout "" True
+      marker [i|#{label}: #{fromMaybe "no reason recorded" reason}|]
+    PhaseSettle -> marker [i|#{label} (latexmk) after #{settleQuietMs}ms without edits|]
   start <- getCurrentTime
   let request = RenderRequest {
         requestEntryPath = taskEntryPath task
@@ -237,19 +257,27 @@ renderOnce env task settle = do
   let ms = realToFrac (diffUTCTime end start) * 1000 :: Double
   case outcome of
     Left () -> do
-      logLine [i|render of #{taskId task} superseded by an edit|]
+      marker [i|#{label} cancelled after #{showMs ms}: a new edit arrived|]
       return False
     Right (Left (e :: SomeException)) -> do
       let (code, msg) = case fromException e of
             Just (RenderFailure c m) -> (c, m)
             Nothing -> (-1, T.pack (show e))
       sendLog env task LogStderr msg False
-      sendStatus env task StatusErrored (Just code) (Just ms) []
+      marker [i|#{label} failed after #{showMs ms}|]
+      sendStatus env task StatusErrored phase reason (Just code) (Just ms) []
       return False
     Right (Right result) -> do
-      publish env task result (map fst overlays) version ms
-      sendStatus env task StatusReady Nothing (Just ms) (resultTimings result)
+      outcome' <- publish env task result (map fst overlays) version ms
+      marker [i|#{label} done in #{showMs ms}: #{outcome'}|]
+      sendStatus env task StatusReady phase reason Nothing (Just ms) (resultTimings result)
       return True
+  where
+    marker :: Text -> IO ()
+    marker text = sendLog env task LogStdout ("── " <> text) False
+
+showMs :: Double -> Text
+showMs ms = T.pack (show (round ms :: Int)) <> "ms"
 
 snapshotBuffers :: ServerEnv -> Task -> IO (Text, Maybe Int32, [(FilePath, Text)])
 snapshotBuffers env task = readTVarIO (envLsp env) >>= \case
@@ -270,8 +298,9 @@ snapshotBuffers env task = readTVarIO (envLsp env) >>= \case
       text <- T.readFile (taskEntryPath task)
       return (text, Nothing, [])
 
--- The deps a client should watch on disk leave out the buffers it sends us itself
-publish :: ServerEnv -> Task -> RenderResult -> [FilePath] -> Maybe Int32 -> Double -> IO ()
+-- | Send the output, as a diff against the last one where possible, and say what was sent. The deps
+-- a client should watch on disk leave out the buffers it sends us itself.
+publish :: ServerEnv -> Task -> RenderResult -> [FilePath] -> Maybe Int32 -> Double -> IO Text
 publish env task (RenderResult {..}) overlayPaths version ms = do
   resync <- atomically (swapTVar (taskResync task) False)
   lastOutput <- readTVarIO (taskLast task)
@@ -286,7 +315,7 @@ publish env task (RenderResult {..}) overlayPaths version ms = do
 
   atomically $ writeTVar (taskDeps task) (S.fromList (taskEntryPath task : resultDeps))
   case encoded of
-    Nothing -> return ()
+    Nothing -> return "output unchanged, nothing sent"
     Just (encoding, baseId, bytes) -> do
       renderId <- atomically $ stateTVar (taskNextRenderId task) (\n -> (n, n + 1))
       atomically $ writeTVar (taskLast task) (Just (renderId, resultBytes))
@@ -300,10 +329,13 @@ publish env task (RenderResult {..}) overlayPaths version ms = do
         , outputRenderMs = ms
         , outputTimings = resultTimings
         }
+      return $ case encoding of
+        EncodingFull -> [i|sent the full #{B.length bytes}B output as render #{renderId}|]
+        EncodingXdelta3 -> [i|output changed, sent a #{B.length bytes}B diff as render #{renderId}|]
 
-sendStatus :: ServerEnv -> Task -> Status -> Maybe Int -> Maybe Double -> [Timing] -> IO ()
-sendStatus env task status code ms timings =
-  send env methodStatus (StatusParams (taskId task) status code ms timings)
+sendStatus :: ServerEnv -> Task -> Status -> Phase -> Maybe Text -> Maybe Int -> Maybe Double -> [Timing] -> IO ()
+sendStatus env task status phase reason code ms timings =
+  send env methodStatus (StatusParams (taskId task) status phase reason code ms timings)
 
 sendLog :: ServerEnv -> Task -> LogStream -> Text -> Bool -> IO ()
 sendLog env task stream text clear = send env methodLog (LogParams (taskId task) stream text clear)
