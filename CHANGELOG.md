@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.0.0
+
+- The server no longer knows any document format. `--render EXE` (and optionally `--settle EXE`) name the programs that render; they run in the document's directory with the task's layout and options in `RENDER_*` variables, write `RENDER_OUTPUT`, and may list what they read in `RENDER_DEPS`. The `latex` and `pandoc` backends and `--backend` are gone; their logic moves to the packaging.
+- No settle pass without a `--settle` program.
+
 ## 0.4.1.2
 
 - Release artifacts for aarch64-linux, x86_64-darwin and aarch64-darwin alongside x86_64-linux.
