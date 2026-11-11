@@ -50,8 +50,7 @@ invocationParser = hsubparser (
 main :: IO ()
 main = do
   hSetBuffering stderr LineBuffering
-  invocation <- execParser (info (invocationParser <**> helper) (fullDesc <> progDesc "Renders documents, live from a language client or once from disk"))
-  case invocation of
+  execParser (info (invocationParser <**> helper) (fullDesc <> progDesc "Renders documents, live from a language client or once from disk")) >>= \case
     Serve (Common {..}) -> do
       tmp <- getCanonicalTemporaryDirectory
       withTempDirectory tmp "lsp-export-server" $ \workRoot ->
