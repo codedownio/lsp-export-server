@@ -12,11 +12,9 @@ extra-source-files:
 
 dependencies:
 - base >= 4.7 && < 5
-- aeson
 - bytestring
 - containers
 - text
-- unliftio
 
 default-extensions:
 - OverloadedStrings
@@ -28,6 +26,7 @@ default-extensions:
 - FlexibleInstances
 - LambdaCase
 - ViewPatterns
+- RankNTypes
 - MultiWayIf
 - TupleSections
 - NumericUnderscores
@@ -45,6 +44,7 @@ library:
   include-dirs: cbits
   cc-options: -std=c11 -DHAVE_CONFIG_H
   dependencies:
+  - aeson
   - base64-bytestring
   - cryptohash-sha256
   - directory
@@ -57,6 +57,7 @@ library:
   - string-interpolate
   - time
   - unix
+  - unliftio
 
 executables:
   lsp-export-server:
@@ -76,6 +77,24 @@ executables:
     - lsp-export-server
     - temporary
     - time
+    - unliftio
+
+internal-libraries:
+  test-lib:
+    source-dirs: test-lib
+    dependencies:
+    - aeson
+    - base64-bytestring
+    - directory
+    - filepath
+    - lens
+    - lsp-export-server
+    - lsp-test
+    - lsp-types
+    - process
+    - sandwich
+    - string-interpolate
+    - time
 
 tests:
   lsp-export-server-test:
@@ -89,17 +108,13 @@ tests:
     - -W
     build-tools:
     - lsp-export-server:lsp-export-server
+    - sandwich:sandwich-discover
     dependencies:
-    - base64-bytestring
-    - directory
+    - aeson
     - filepath
     - lsp-export-server
     - lsp-test
-    - lsp-types
-    - monad-logger
-    - process
     - sandwich
     - string-interpolate
-    - lens
-    - exceptions
-    - time
+    - test-lib
+    - unliftio
