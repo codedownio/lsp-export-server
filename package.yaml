@@ -1,5 +1,5 @@
 name:                lsp-export-server
-version:             0.4.1.2
+version:             0.5.0.0
 synopsis:            A language server that renders documents from their in-memory buffers
 license:             BSD-3-Clause
 github:              codedownio/lsp-export-server
@@ -87,7 +87,19 @@ tests:
     - -rtsopts
     - -with-rtsopts=-N
     - -W
+    build-tools:
+    - lsp-export-server:lsp-export-server
     dependencies:
+    - base64-bytestring
+    - directory
+    - filepath
     - lsp-export-server
+    - lsp-test
+    - lsp-types
+    - monad-logger
+    - process
     - sandwich
     - string-interpolate
+    - lens
+    - exceptions
+    - time

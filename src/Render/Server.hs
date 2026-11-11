@@ -31,7 +31,7 @@ import Language.LSP.Protocol.Message
 import Language.LSP.Protocol.Types
 import Language.LSP.Server
 import Language.LSP.VFS
-import Render.Backend
+import Render.Command
 import Render.Protocol
 import qualified Render.Xdelta as Xdelta
 import System.Directory
@@ -66,7 +66,7 @@ data Task = Task {
   }
 
 data ServerEnv = ServerEnv {
-  envBackend :: Backend
+  envCommand :: Programs
   , envWorkRoot :: FilePath
   , envDefaultOptions :: Map Text Text
   , envTasks :: TVar (Map Text Task)
@@ -74,9 +74,9 @@ data ServerEnv = ServerEnv {
   }
 
 -- | Serve on stdio until the client exits us. Returns the exit code.
-runRenderServer :: Backend -> FilePath -> Map Text Text -> IO Int
-runRenderServer backend workRoot defaultOpts = do
-  env <- ServerEnv backend workRoot defaultOpts <$> newTVarIO mempty <*> newTVarIO Nothing
+runRenderServer :: Programs -> FilePath -> Map Text Text -> IO Int
+runRenderServer command workRoot defaultOpts = do
+  env <- ServerEnv command workRoot defaultOpts <$> newTVarIO mempty <*> newTVarIO Nothing
   runServer ServerDefinition {
     defaultConfig = ()
     , configSection = "codedown-render"
@@ -220,9 +220,11 @@ runWorker env task = forever $ do
     True -> return ()
     False -> renderOnce env task PhaseQuick >>= \case
       False -> return ()
-      True -> quietFor settleQuietMs >>= \case
-        False -> return ()
-        True -> void (renderOnce env task PhaseSettle)
+      True -> case programSettle (envCommand env) of
+        Nothing -> return ()
+        Just _ -> quietFor settleQuietMs >>= \case
+          False -> return ()
+          True -> void (renderOnce env task PhaseSettle)
   where
     quietFor ms = race (threadDelay (ms * 1000)) (atomically (readTVar (taskDirty task) >>= check)) >>= \case
       Left () -> return True
@@ -256,7 +258,7 @@ renderOnce env task phase = do
       sendStatus env task StatusRendering phase reason Nothing Nothing []
       sendLog env task LogStdout "" True
       marker [i|#{label}: #{fromMaybe "no reason recorded" reason}|]
-    PhaseSettle -> marker [i|#{label} (latexmk) after #{settleQuietMs}ms without edits|]
+    PhaseSettle -> marker [i|#{label} after #{settleQuietMs}ms without edits|]
   start <- getCurrentTime
   let request = RenderRequest {
         requestEntryPath = taskEntryPath task
@@ -268,7 +270,7 @@ renderOnce env task phase = do
         , requestEpoch = taskEpoch task
         , requestLog = logFn
         }
-  outcome <- race (atomically (readTVar (taskDirty task) >>= check)) (try (backendRender (envBackend env) request))
+  outcome <- race (atomically (readTVar (taskDirty task) >>= check)) (try (render (envCommand env) request))
   end <- getCurrentTime
   let ms = realToFrac (diffUTCTime end start) * 1000 :: Double
   case outcome of
