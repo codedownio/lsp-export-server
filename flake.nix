@@ -44,6 +44,7 @@
 
         devShellInputs = with pkgs; [
           haskell.compiler.ghc9124
+          zlib
         ];
 
       in

@@ -3,6 +3,7 @@ module Render.Backend.Latex (
   , prepareWorkDir
   , compileTex
   , depsFromFls
+  , logStream
   ) where
 
 import Control.Monad (forM_, unless, when)
@@ -40,20 +41,17 @@ latexBackend = Backend {
 -- Returns the @src/@ directory.
 prepareWorkDir :: RenderRequest -> IO FilePath
 prepareWorkDir (RenderRequest {..}) = do
-  let entryDir = takeDirectory requestEntryPath
-      srcDir = requestWorkDir </> "src"
-      overlayDir = requestWorkDir </> "overlay"
-      outDir = requestWorkDir </> "out"
-
-  forM_ [srcDir, outDir] (createDirectoryIfMissing True)
+  let srcDir = requestWorkDir </> "src"
+  forM_ [srcDir, requestWorkDir </> "out"] (createDirectoryIfMissing True)
   T.writeFile (srcDir </> takeFileName requestEntryPath) requestEntryText
 
+  let overlayDir = requestWorkDir </> "overlay"
   doesDirectoryExist overlayDir >>= \case
     True -> removeDirectoryRecursive overlayDir
     False -> return ()
   createDirectoryIfMissing True overlayDir
   forM_ requestOverlays $ \(path, text) -> do
-    let rel = makeRelative entryDir path
+    let rel = makeRelative (takeDirectory requestEntryPath) path
     unless (isAbsolute rel || ".." `isPrefixOf` rel) $ do
       createDirectoryIfMissing True (takeDirectory (overlayDir </> rel))
       T.writeFile (overlayDir </> rel) text
@@ -64,26 +62,20 @@ prepareWorkDir (RenderRequest {..}) = do
 -- build when settling. The PDF, the recorded dependencies and the timing come back.
 compileTex :: RenderRequest -> FilePath -> IO RenderResult
 compileTex (RenderRequest {..}) texFile = do
-  let entryDir = takeDirectory requestEntryPath
-      job = dropExtension (takeFileName texFile)
-      srcDir = requestWorkDir </> "src"
-      overlayDir = requestWorkDir </> "overlay"
-      outDir = requestWorkDir </> "out"
-
+  let job = dropExtension (takeFileName texFile)
+  let outDir = requestWorkDir </> "out"
+  let overlayDir = requestWorkDir </> "overlay"
   let engine = T.unpack (fromMaybe "pdflatex" (M.lookup "engine" requestOptions))
-  baseEnv <- getEnvironment
-  let inherited = fromMaybe "" (lookup "TEXINPUTS" baseEnv)
-      texinputs = overlayDir <> "//:" <> (if null inherited then "" else inherited)
-      overrides = [("TEXINPUTS", texinputs), ("LC_ALL", "C"), ("SOURCE_DATE_EPOCH", show requestEpoch), ("FORCE_SOURCE_DATE", "1")]
-      env = overrides <> filter ((`notElem` map fst overrides) . fst) baseEnv
-      common = ["-interaction=nonstopmode", "-halt-on-error", "-file-line-error", "-recorder", "-jobname=" <> job]
-      (exe, args) = case requestSettle of
+  env <- texEnv overlayDir requestEpoch <$> getEnvironment
+  let common = ["-interaction=nonstopmode", "-halt-on-error", "-file-line-error", "-recorder", "-jobname=" <> job]
+  let (exe, args) = case requestSettle of
         True -> ("latexmk", [engineFlag engine, "-outdir=" <> outDir] <> common <> [texFile])
         False -> (engine, ["-output-directory=" <> outDir] <> common <> [texFile])
 
   requestLog LogStdout (T.pack (unwords (exe : args)))
+  let entryDir = takeDirectory requestEntryPath
   start <- getCurrentTime
-  code <- runCapturing entryDir env exe args $ \isOut line -> requestLog (if isOut then LogStdout else LogStderr) line
+  code <- runCapturing entryDir env exe args $ \isOut line -> requestLog (logStream isOut) line
   end <- getCurrentTime
   let ms = realToFrac (diffUTCTime end start) * 1000 :: Double
 
@@ -97,13 +89,29 @@ compileTex (RenderRequest {..}) texFile = do
   fls <- doesFileExist (outDir </> job <.> "fls") >>= \case
     True -> T.readFile (outDir </> job <.> "fls")
     False -> return ""
-  let deps = depsFromFls entryDir requestEntryPath srcDir overlayDir requestWorkDir fls
   return RenderResult {
     resultFileName = T.pack (job <.> "pdf")
     , resultBytes = bytes
-    , resultDeps = deps
+    , resultDeps = depsFromFls entryDir requestEntryPath (requestWorkDir </> "src") overlayDir requestWorkDir fls
     , resultTimings = [Timing (T.pack exe) ms]
     }
+
+logStream :: Bool -> LogStream
+logStream = \case
+  True -> LogStdout
+  False -> LogStderr
+
+-- The overlay directory comes first on TEXINPUTS so open buffers shadow their disk copies; the
+-- epoch pins the timestamps the engine writes into the PDF
+texEnv :: FilePath -> Integer -> [(String, String)] -> [(String, String)]
+texEnv overlayDir epoch baseEnv = overrides <> filter ((`notElem` map fst overrides) . fst) baseEnv
+  where
+    overrides = [
+      ("TEXINPUTS", overlayDir <> "//:" <> fromMaybe "" (lookup "TEXINPUTS" baseEnv))
+      , ("LC_ALL", "C")
+      , ("SOURCE_DATE_EPOCH", show epoch)
+      , ("FORCE_SOURCE_DATE", "1")
+      ]
 
 engineFlag :: String -> String
 engineFlag = \case
@@ -118,22 +126,26 @@ depsFromFls entryDir entryPath srcDir overlayDir workDir fls = nub (mapMaybe dep
   where
     dep line = case T.stripPrefix "INPUT " line of
       Nothing -> Nothing
-      Just (T.unpack . T.strip -> p) ->
-        let abs' = normalise (if isAbsolute p then p else entryDir </> p)
-        in if | "/nix/store" `isPrefixOf` abs' -> Nothing
-              | normalise srcDir `isPrefixOf` abs' -> Just entryPath
-              | normalise overlayDir `isPrefixOf` abs' -> Just (entryDir </> makeRelative (normalise overlayDir) abs')
-              | normalise workDir `isPrefixOf` abs' -> Nothing
-              | otherwise -> Just abs'
+      Just (T.unpack . T.strip -> p) -> classify (normalise (absolute p))
+
+    absolute p = case isAbsolute p of
+      True -> p
+      False -> entryDir </> p
+
+    classify abs'
+      | "/nix/store" `isPrefixOf` abs' = Nothing
+      | normalise srcDir `isPrefixOf` abs' = Just entryPath
+      | normalise overlayDir `isPrefixOf` abs' = Just (entryDir </> makeRelative (normalise overlayDir) abs')
+      | normalise workDir `isPrefixOf` abs' = Nothing
+      | otherwise = Just abs'
 
 -- The engine's own account of what went wrong: the @!@ lines and the @file:line:@ errors
 logErrors :: FilePath -> (LogStream -> T.Text -> IO ()) -> IO ()
 logErrors logFile logFn = doesFileExist logFile >>= \case
   False -> return ()
   True -> do
-    contents <- T.readFile logFile
-    let ls = T.lines contents
-        interesting = [l | (l, next) <- zip ls (drop 1 ls <> [""]), isError l || isError next]
+    ls <- T.lines <$> T.readFile logFile
+    let interesting = [l | (l, next) <- zip ls (drop 1 ls <> [""]), isError l || isError next]
     when (not (null interesting)) $ logFn LogStderr (T.unlines interesting)
   where
     isError l = "!" `T.isPrefixOf` l || T.isInfixOf ":error:" l || hasLineError l

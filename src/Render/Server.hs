@@ -13,7 +13,6 @@ import Data.Aeson (Result(..), Value, fromJSON, toJSON)
 import qualified Data.Aeson as A
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Base64 as B64
-import Data.Int (Int32)
 import Data.Map (Map)
 import qualified Data.Map as M
 import Data.Maybe (fromMaybe, isJust)
@@ -114,9 +113,8 @@ handlers env = mconcat [
   -- The lsp library always advertises semantic tokens; answer with nothing rather than an error
   , requestHandler SMethod_TextDocumentSemanticTokensFull $ \_ respond -> respond (Right (InR Null))
   , requestHandler SMethod_WorkspaceExecuteCommand $ \req respond -> do
-      let cmd = req ^. L.params . L.command
-          args = fromMaybe [] (req ^. L.params . L.arguments)
-      result <- liftIO $ try (executeCommand env cmd args)
+      let args = fromMaybe [] (req ^. L.params . L.arguments)
+      result <- liftIO $ try (executeCommand env (req ^. L.params . L.command) args)
       respond $ case result of
         Left (e :: SomeException) -> Left (TResponseError (InR ErrorCodes_InvalidParams) (T.pack (show e)) Nothing)
         Right Nothing -> Right (InR Null)
@@ -241,8 +239,7 @@ renderOnce env task phase = do
   let reason = case reasons of
         [] -> Nothing
         _ -> Just (T.intercalate ", " reasons)
-      settle = phase == PhaseSettle
-      label = case phase of
+  let label = case phase of
         PhaseQuick -> "quick render" :: Text
         PhaseSettle -> "settle pass"
   -- The settle pass stays out of the log unless it fails or changes the output
@@ -250,8 +247,8 @@ renderOnce env task phase = do
   let logFn stream text = case phase of
         PhaseQuick -> sendLog env task stream text False
         PhaseSettle -> atomically (modifyTVar' buffered ((stream, text) :))
-      marker text = logFn LogStdout ("── " <> text)
-      flush = do
+  let marker text = logFn LogStdout ("── " <> text)
+  let flush = do
         lines' <- reverse <$> atomically (swapTVar buffered [])
         forM_ lines' $ \(stream, text) -> sendLog env task stream text False
   case phase of
@@ -267,7 +264,7 @@ renderOnce env task phase = do
         , requestOverlays = overlays
         , requestWorkDir = taskWorkDir task
         , requestOptions = taskOptions task
-        , requestSettle = settle
+        , requestSettle = phase == PhaseSettle
         , requestEpoch = taskEpoch task
         , requestLog = logFn
         }
