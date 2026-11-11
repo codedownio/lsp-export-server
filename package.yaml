@@ -90,3 +90,4 @@ tests:
     dependencies:
     - lsp-export-server
     - sandwich
+    - string-interpolate
