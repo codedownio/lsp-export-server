@@ -3,6 +3,7 @@ module Render.Backend.Pandoc (
   ) where
 
 import qualified Data.ByteString as B
+import Data.Map (Map)
 import qualified Data.Map as M
 import Data.Maybe (fromMaybe)
 import Data.String.Interpolate
@@ -10,7 +11,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time
 import Render.Backend
-import Render.Backend.Latex (compileTex, prepareWorkDir)
+import Render.Backend.Latex (compileTex, logStream, prepareWorkDir)
 import Render.Process
 import Render.Protocol (LogStream(..), Timing(..))
 import System.Environment (getEnvironment)
@@ -32,32 +33,21 @@ render :: RenderRequest -> IO RenderResult
 render req@(RenderRequest {..}) = do
   srcDir <- prepareWorkDir req
   let entryFile = takeFileName requestEntryPath
-      job = dropExtension entryFile
-      outDir = requestWorkDir </> "out"
-      opt k = M.lookup k requestOptions
-      to = fromMaybe "html" (opt "to")
-      writer = case to of
-        "pdf" -> "latex"
-        other -> other
-      format = T.unpack (fromMaybe (defaultExtension writer) (opt "format"))
-      reader = case takeExtension entryFile of
-        ".md" -> ["-f", T.unpack (fromMaybe defaultMarkdown (opt "from"))]
-        _ -> []
-      extra = maybe [] (map T.unpack . T.words) (opt "pandoc_args")
-      viaLatex = writer `elem` ["latex", "beamer"]
-      output = case viaLatex of
+  let job = dropExtension entryFile
+  let writer = writerFor requestOptions
+  let format = T.unpack (fromMaybe (defaultExtension writer) (M.lookup "format" requestOptions))
+  let viaLatex = writer `elem` ["latex", "beamer"]
+  let output = case viaLatex of
         True -> srcDir </> job <.> "tex"
-        False -> outDir </> job <.> format
-      args = reader <> ["-t", T.unpack writer, "--standalone"] <> extra <> [srcDir </> entryFile, "-o", output]
+        False -> requestWorkDir </> "out" </> job <.> format
+  let args = readerArgs entryFile requestOptions <> ["-t", T.unpack writer, "--standalone"] <> extraArgs requestOptions <> [srcDir </> entryFile, "-o", output]
 
   env <- (("LC_ALL", "C") :) . filter ((/= "LC_ALL") . fst) <$> getEnvironment
   requestLog LogStdout (T.pack (unwords ("pandoc" : args)))
   start <- getCurrentTime
-  code <- runCapturing (takeDirectory requestEntryPath) env "pandoc" args $ \isOut line ->
-    requestLog (if isOut then LogStdout else LogStderr) line
+  code <- runCapturing (takeDirectory requestEntryPath) env "pandoc" args $ \isOut line -> requestLog (logStream isOut) line
   end <- getCurrentTime
-  let ms = realToFrac (diffUTCTime end start) * 1000 :: Double
-      pandocTiming = Timing "pandoc" ms
+  let pandocTiming = Timing "pandoc" (realToFrac (diffUTCTime end start) * 1000)
 
   case code of
     ExitFailure n -> throwIO (RenderFailure n [i|pandoc exited with code #{n}|])
@@ -75,6 +65,19 @@ render req@(RenderRequest {..}) = do
         , resultDeps = []
         , resultTimings = [pandocTiming]
         }
+
+writerFor :: Map Text Text -> Text
+writerFor options = case fromMaybe "html" (M.lookup "to" options) of
+  "pdf" -> "latex"
+  other -> other
+
+readerArgs :: FilePath -> Map Text Text -> [String]
+readerArgs entryFile options = case takeExtension entryFile of
+  ".md" -> ["-f", T.unpack (fromMaybe defaultMarkdown (M.lookup "from" options))]
+  _ -> []
+
+extraArgs :: Map Text Text -> [String]
+extraArgs = maybe [] (map T.unpack . T.words) . M.lookup "pandoc_args"
 
 defaultMarkdown :: Text
 defaultMarkdown = "markdown+tex_math_dollars+tex_math_single_backslash+raw_html+smart"
