@@ -20,8 +20,9 @@ jobs:
 
     - name: Run tests
       run: |
+        SERVER=$(nix build --no-link --print-out-paths .#dynamic)/bin
         TESTS=$(nix build --no-link --print-out-paths .#tests)/bin/lsp-export-server-test
-        "$TESTS" --print
+        PATH="$SERVER:$PATH" "$TESTS" --print
 
   no-gmp:
     runs-on: arc-public-small
