@@ -161,3 +161,4 @@ data LogParams = LogParams {
   } deriving (Show, Eq, Generic)
 instance ToJSON LogParams where toJSON = genericToJSON (fieldOptions 3)
 instance FromJSON LogParams where parseJSON = genericParseJSON (fieldOptions 3)
+

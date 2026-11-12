@@ -2,6 +2,7 @@ resolver: nightly-2026-04-19
 
 packages:
 - .
+- ./lsp-export-protocol
 
 nix:
   enable: false

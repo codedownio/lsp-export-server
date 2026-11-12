@@ -39,7 +39,6 @@ library
   exposed-modules:
       Render.Command
       Render.Process
-      Render.Protocol
       Render.Server
       Render.Xdelta
   other-modules:
@@ -81,6 +80,7 @@ library
     , filepath
     , lens
     , lsp
+    , lsp-export-protocol
     , lsp-types
     , process
     , stm
@@ -128,6 +128,7 @@ library test-lib
     , directory
     , filepath
     , lens
+    , lsp-export-protocol
     , lsp-export-server
     , lsp-test
     , lsp-types
@@ -169,6 +170,7 @@ executable lsp-export-server
     , containers
     , directory
     , filepath
+    , lsp-export-protocol
     , lsp-export-server
     , optparse-applicative
     , temporary
@@ -217,6 +219,7 @@ test-suite lsp-export-server-test
     , bytestring
     , containers
     , filepath
+    , lsp-export-protocol
     , lsp-export-server
     , lsp-test
     , sandwich

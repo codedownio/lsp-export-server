@@ -1,0 +1,26 @@
+name:                lsp-export-protocol
+version:             0.1.0.0
+synopsis:            The codedown/render wire protocol spoken by lsp-export-server
+license:             BSD-3-Clause
+github:              codedownio/lsp-export-server
+
+extra-source-files:
+- README.md
+
+dependencies:
+- base >= 4.7 && < 5
+- aeson
+- containers
+- text
+
+default-extensions:
+- LambdaCase
+- OverloadedStrings
+
+ghc-options:
+- -Wunused-packages
+- -Wall
+- -fno-warn-name-shadowing
+
+library:
+  source-dirs: src
