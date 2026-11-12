@@ -51,6 +51,7 @@ library:
   - filepath
   - lens
   - lsp
+  - lsp-export-protocol
   - lsp-types
   - process
   - stm
@@ -74,6 +75,7 @@ executables:
     - directory
     - filepath
     - optparse-applicative
+    - lsp-export-protocol
     - lsp-export-server
     - temporary
     - time
@@ -88,6 +90,7 @@ internal-libraries:
     - directory
     - filepath
     - lens
+    - lsp-export-protocol
     - lsp-export-server
     - lsp-test
     - lsp-types
@@ -112,6 +115,7 @@ tests:
     dependencies:
     - aeson
     - filepath
+    - lsp-export-protocol
     - lsp-export-server
     - lsp-test
     - sandwich
