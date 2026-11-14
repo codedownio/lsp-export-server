@@ -1,5 +1,5 @@
 name:                lsp-export-protocol
-version:             0.1.0.0
+version:             0.1.1.0
 synopsis:            The codedown/render wire protocol spoken by lsp-export-server
 license:             BSD-3-Clause
 github:              codedownio/lsp-export-server

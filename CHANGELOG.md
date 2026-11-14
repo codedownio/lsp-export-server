@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.1.0
+
+- `--locate EXE` names an optional program that maps source positions to places in the output and
+  back. Each output that answers an edit carries where the edit landed (`position`), and
+  `codedown.render.locate` / `codedown.render.sourceAt` answer the same queries on request.
+
 ## 0.1.0.0
 
 - First release. A language server that renders a document from the buffers the client sends and
