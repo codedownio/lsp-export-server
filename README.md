@@ -7,7 +7,7 @@ server as `didChange` and a new render comes back without a trip through the dis
 The server knows nothing about document formats. The packaging names the program that renders:
 
 ```
-lsp-export-server serve --render latex-render --settle latex-render -o engine=pdflatex   # the LSP, on stdio
+lsp-export-server serve --render latex-render --settle latex-render --locate latex-locate -o engine=pdflatex   # the LSP, on stdio
 lsp-export-server render --render latex-render input.tex output.pdf                      # once, from disk
 ```
 
@@ -40,10 +40,29 @@ that exit code. Paths listed in `RENDER_DEPS` under `RENDER_SRC` or `RENDER_OVER
 back to the documents they stand for; the client is told to watch the ones it does not hold open,
 and a `rebuild` renders again only when one of them changed.
 
+## The locate program
+
+Optional. It maps between source positions and places in the last output, as SyncTeX does for
+LaTeX. It runs in the document's directory with `RENDER_DOCUMENT`, `RENDER_JOB`, `RENDER_FORMAT`,
+`RENDER_OUTPUT`, `RENDER_WORK` and `RENDER_OUT` as for the render program, and:
+
+| Variable | |
+|---|---|
+| `RENDER_QUERY` | `forward` or `inverse` |
+| `RENDER_SOURCE`, `RENDER_LINE`, `RENDER_COLUMN` | forward: the file as the render program saw it (the copy under `RENDER_WORK` for a buffer), and a one-based line and column |
+| `RENDER_PAGE`, `RENDER_X`, `RENDER_Y` | inverse: a one-based page, and a point on it in PDF points from its top-left corner |
+| `RENDER_RESULT` | where to write the answer, one line: `page left top width height` for forward, in the same units; `line column file` for inverse, one-based. Nothing when there is no match |
+
+After each render that follows an edit, the server locates the edit and sends the box with the
+output as `position`. The `locate` and `sourceAt` commands answer the same queries for the client,
+from the last render. Files under `RENDER_WORK` in an inverse answer are mapped back to the
+documents they stand for, as with `RENDER_DEPS`.
+
 ## Protocol
 
 Commands (`workspace/executeCommand`): `codedown.render.start`, `codedown.render.stop`,
-`codedown.render.rebuild`, `codedown.render.setPaused`, `codedown.render.resync`. Notifications:
+`codedown.render.rebuild`, `codedown.render.setPaused`, `codedown.render.resync`,
+`codedown.render.locate`, `codedown.render.sourceAt`. Notifications:
 `codedown/render/status`, `codedown/render/output`, `codedown/render/log`. See `src/Render/Protocol.hs`.
 Statuses carry the pass (`phase`) and what triggered it (`reason`), and `──` marker lines in the
 log say when each pass started, why, how long it took and what was sent.

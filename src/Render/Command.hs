@@ -6,35 +6,44 @@ module Render.Command (
   , render
   , prepareWorkDir
   , mapDeps
+  , locate
+  , sourceAt
+  , workPathFor
   ) where
 
 import Control.Monad (forM_, unless)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as B
+import Data.IORef
 import Data.List (isPrefixOf, nub)
 import Data.Map (Map)
 import qualified Data.Map as M
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, listToMaybe)
 import Data.String.Interpolate
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import Data.Time
 import Render.Process
-import Render.Protocol (LogStream(..), Timing(..))
+import Render.Protocol (LogStream(..), PageBox(..), Timing(..))
 import System.Directory
 import System.Environment (getEnvironment)
 import System.Exit
 import System.FilePath
+import System.IO (hClose)
+import Text.Read (readMaybe)
 import UnliftIO (Exception, throwIO)
+import UnliftIO.Temporary (withTempFile)
 
 
 -- | The programs that render: one for the quick pass after each edit, and optionally one for the
 -- settle pass once edits stay quiet. Each runs in the document's directory with the layout and
--- options in @RENDER_*@ variables and must write @RENDER_OUTPUT@.
+-- options in @RENDER_*@ variables and must write @RENDER_OUTPUT@. The optional locate program maps
+-- between source positions and places in the last output.
 data Programs = Programs {
   programRender :: FilePath
   , programSettle :: Maybe FilePath
+  , programLocate :: Maybe FilePath
   }
 
 data RenderRequest = RenderRequest {
@@ -163,3 +172,75 @@ mapDeps entryDir entryPath workDir = nub . concatMap (classify . normalise . abs
       | overlayDir `isPrefixOf` p = [entryDir </> makeRelative overlayDir p]
       | normalise workDir `isPrefixOf` p = []
       | otherwise = [p]
+
+-- | Run the locate program forward: a one-based line and column of a file, as the programs see it
+-- (see 'workPathFor'), to the box it landed in. Nothing when the program finds no match.
+locate :: FilePath -> FilePath -> FilePath -> Text -> FilePath -> Int -> Int -> IO (Either Text (Maybe PageBox))
+locate exe entryPath workDir format source line column =
+  fmap (>>= parseBox) <$> runLocate exe entryPath workDir format [
+    ("RENDER_QUERY", "forward")
+    , ("RENDER_SOURCE", source)
+    , ("RENDER_LINE", show line)
+    , ("RENDER_COLUMN", show column)
+    ]
+  where
+    parseBox t = case words (T.unpack t) of
+      [page, left, top, width, height] -> PageBox <$> readMaybe page <*> readMaybe left <*> readMaybe top <*> readMaybe width <*> readMaybe height
+      _ -> Nothing
+
+-- | Run the locate program inverse: a one-based page and a point on it in PDF points from its
+-- top-left corner, to the document, one-based line and column it came from.
+sourceAt :: FilePath -> FilePath -> FilePath -> Text -> Int -> Double -> Double -> IO (Either Text (Maybe (FilePath, Int, Int)))
+sourceAt exe entryPath workDir format page x y =
+  fmap (>>= parseSource) <$> runLocate exe entryPath workDir format [
+    ("RENDER_QUERY", "inverse")
+    , ("RENDER_PAGE", show page)
+    , ("RENDER_X", show x)
+    , ("RENDER_Y", show y)
+    ]
+  where
+    parseSource t = do
+      let (line, rest) = T.breakOn " " (T.strip t)
+      let (column, path) = T.breakOn " " (T.stripStart rest)
+      line' <- readMaybe (T.unpack line)
+      column' <- readMaybe (T.unpack column)
+      source <- case T.stripStart path of
+        "" -> Nothing
+        p -> listToMaybe (mapDeps (takeDirectory entryPath) entryPath workDir [T.unpack p])
+      return (source, line', column')
+
+-- | The first line the locate program wrote to @RENDER_RESULT@, if any
+runLocate :: FilePath -> FilePath -> FilePath -> Text -> [(String, String)] -> IO (Either Text (Maybe Text))
+runLocate exe entryPath workDir format query = withTempFile workDir "located" $ \resultFile h -> do
+  hClose h
+  let job = dropExtension (takeFileName entryPath)
+  let vars = [
+        ("RENDER_DOCUMENT", entryPath)
+        , ("RENDER_JOB", job)
+        , ("RENDER_FORMAT", T.unpack format)
+        , ("RENDER_OUTPUT", workDir </> "out" </> job <.> T.unpack format)
+        , ("RENDER_WORK", workDir)
+        , ("RENDER_OUT", workDir </> "out")
+        , ("RENDER_RESULT", resultFile)
+        ] <> query
+  env <- (vars <>) . filter ((`notElem` map fst vars) . fst) <$> getEnvironment
+  logs <- newIORef []
+  code <- runCapturing (takeDirectory entryPath) env exe [] $ \_ line -> modifyIORef' logs (line :)
+  case code of
+    ExitFailure n -> do
+      lastLines <- reverse . take 5 <$> readIORef logs
+      return (Left [i|#{takeFileName exe} exited with code #{n}: #{T.intercalate " / " lastLines}|])
+    ExitSuccess -> Right . listToMaybe . filter (not . T.null) . T.lines <$> T.readFile resultFile
+
+-- | Where the programs see a document: the entry's copy under @src/@, an open buffer's under
+-- @overlay/@ when the last render wrote one, and any other file at its own path.
+workPathFor :: FilePath -> FilePath -> FilePath -> IO FilePath
+workPathFor entryPath workDir path
+  | path == entryPath = return (workDir </> "src" </> takeFileName entryPath)
+  | isAbsolute rel || ".." `isPrefixOf` rel = return path
+  | otherwise = doesFileExist overlay >>= \case
+      True -> return overlay
+      False -> return path
+  where
+    rel = makeRelative (takeDirectory entryPath) path
+    overlay = workDir </> "overlay" </> rel

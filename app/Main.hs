@@ -31,7 +31,8 @@ commonParser :: Parser Common
 commonParser = Common
   <$> (Programs
     <$> strOption (long "render" <> metavar "EXE" <> help "The program that renders: run in the document's directory with the RENDER_* variables; writes RENDER_OUTPUT")
-    <*> optional (strOption (long "settle" <> metavar "EXE" <> help "The program for the settle pass once edits stay quiet; without one there is no settle pass")))
+    <*> optional (strOption (long "settle" <> metavar "EXE" <> help "The program for the settle pass once edits stay quiet; without one there is no settle pass"))
+    <*> optional (strOption (long "locate" <> metavar "EXE" <> help "The program that maps source positions to places in the output and back; without one, outputs carry no position")))
   <*> many (option (eitherReader keyValue) (long "option" <> short 'o' <> metavar "KEY=VALUE" <> help "An option passed on as RENDER_OPT_KEY"))
   where
     keyValue s = case break (== '=') s of

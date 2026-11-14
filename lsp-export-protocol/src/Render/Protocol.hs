@@ -8,6 +8,8 @@ module Render.Protocol (
   , commandRebuild
   , commandSetPaused
   , commandResync
+  , commandLocate
+  , commandSourceAt
   , allCommands
 
   , methodStatus
@@ -17,6 +19,10 @@ module Render.Protocol (
   , StartParams(..)
   , StartResult(..)
   , RebuildParams(..)
+  , LocateParams(..)
+  , SourceAtParams(..)
+  , SourceLocation(..)
+  , PageBox(..)
 
   , Status(..)
   , Phase(..)
@@ -37,15 +43,17 @@ import Data.Text (Text)
 import GHC.Generics (Generic)
 
 
-commandStart, commandStop, commandRebuild, commandSetPaused, commandResync :: Text
+commandStart, commandStop, commandRebuild, commandSetPaused, commandResync, commandLocate, commandSourceAt :: Text
 commandStart = "codedown.render.start"
 commandStop = "codedown.render.stop"
 commandRebuild = "codedown.render.rebuild"
 commandSetPaused = "codedown.render.setPaused"
 commandResync = "codedown.render.resync"
+commandLocate = "codedown.render.locate"
+commandSourceAt = "codedown.render.sourceAt"
 
 allCommands :: [Text]
-allCommands = [commandStart, commandStop, commandRebuild, commandSetPaused, commandResync]
+allCommands = [commandStart, commandStop, commandRebuild, commandSetPaused, commandResync, commandLocate, commandSourceAt]
 
 methodStatus, methodOutput, methodLog :: Text
 methodStatus = "codedown/render/status"
@@ -88,6 +96,46 @@ newtype RebuildParams = RebuildParams {
   } deriving (Show, Eq, Generic)
 instance ToJSON RebuildParams where toJSON = genericToJSON (fieldOptions 7)
 instance FromJSON RebuildParams where parseJSON = genericParseJSON (fieldOptions 7)
+
+-- | A source position, zero-based like LSP positions
+data LocateParams = LocateParams {
+  locateTaskId :: Text
+  , locateUri :: Text
+  , locateLine :: Int
+  , locateCharacter :: Int
+  } deriving (Show, Eq, Generic)
+instance ToJSON LocateParams where toJSON = genericToJSON (fieldOptions 6)
+instance FromJSON LocateParams where parseJSON = genericParseJSON (fieldOptions 6)
+
+-- | A point on a page of the last output: a one-based page and PDF points from its top-left corner
+data SourceAtParams = SourceAtParams {
+  sourceAtTaskId :: Text
+  , sourceAtPage :: Int
+  , sourceAtX :: Double
+  , sourceAtY :: Double
+  } deriving (Show, Eq, Generic)
+instance ToJSON SourceAtParams where toJSON = genericToJSON (fieldOptions 8)
+instance FromJSON SourceAtParams where parseJSON = genericParseJSON (fieldOptions 8)
+
+-- | Zero-based like LSP positions
+data SourceLocation = SourceLocation {
+  sourceUri :: Text
+  , sourceLine :: Int
+  , sourceCharacter :: Int
+  } deriving (Show, Eq, Generic)
+instance ToJSON SourceLocation where toJSON = genericToJSON (fieldOptions 6)
+instance FromJSON SourceLocation where parseJSON = genericParseJSON (fieldOptions 6)
+
+-- | A box on a page of the output: a one-based page, and PDF points from the page's top-left corner
+data PageBox = PageBox {
+  boxPage :: Int
+  , boxLeft :: Double
+  , boxTop :: Double
+  , boxWidth :: Double
+  , boxHeight :: Double
+  } deriving (Show, Eq, Generic)
+instance ToJSON PageBox where toJSON = genericToJSON (fieldOptions 3)
+instance FromJSON PageBox where parseJSON = genericParseJSON (fieldOptions 3)
 
 data Timing = Timing {
   timingLabel :: Text
@@ -144,6 +192,8 @@ data OutputParams = OutputParams {
   , outputDeps :: [FilePath]
   , outputRenderMs :: Double
   , outputTimings :: [Timing]
+  -- | Where the edit this render answers landed in the output
+  , outputPosition :: Maybe PageBox
   } deriving (Show, Eq, Generic)
 instance ToJSON OutputParams where toJSON = genericToJSON (fieldOptions 6)
 instance FromJSON OutputParams where parseJSON = genericParseJSON (fieldOptions 6)
