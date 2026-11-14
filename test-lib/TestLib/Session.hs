@@ -4,12 +4,16 @@ module TestLib.Session (
   , withServer
   , start
   , execute
+  , executeResult
   , whole
+  , insertAt
   ) where
 
 import Control.Lens ((&), (.~))
+import Control.Monad (void)
 import Control.Monad.IO.Class (liftIO)
 import Data.Aeson (Value, toJSON)
+import qualified Data.Aeson as A
 import qualified Data.Map as M
 import Data.String.Interpolate
 import Data.Text (Text)
@@ -72,11 +76,20 @@ start docDir debounceMs options = do
   return doc
 
 execute :: Text -> [Value] -> Session (ExampleT context IO) ()
-execute cmd args = do
+execute cmd args = void (executeResult cmd args)
+
+executeResult :: Text -> [Value] -> Session (ExampleT context IO) Value
+executeResult cmd args = do
   TResponseMessage {_result} <- request SMethod_WorkspaceExecuteCommand (ExecuteCommandParams Nothing cmd (Just args))
   case _result of
     Left err -> liftIO $ expectationFailure [i|#{cmd} failed: #{err}|]
-    Right _ -> return ()
+    Right (InL v) -> return v
+    Right (InR _) -> return A.Null
 
 whole :: Text -> TextDocumentContentChangeEvent
 whole text = TextDocumentContentChangeEvent (InR (TextDocumentContentChangeWholeDocument text))
+
+-- | Insert text at a zero-based line and character
+insertAt :: UInt -> UInt -> Text -> TextDocumentContentChangeEvent
+insertAt line character text = TextDocumentContentChangeEvent (InL (TextDocumentContentChangePartial (Range pos pos) Nothing text))
+  where pos = Position line character

@@ -15,7 +15,7 @@ import qualified Data.ByteString as B
 import qualified Data.ByteString.Base64 as B64
 import Data.Map (Map)
 import qualified Data.Map as M
-import Data.Maybe (fromMaybe, isJust)
+import Data.Maybe (fromMaybe, isJust, listToMaybe)
 import Data.Proxy
 import Data.Set (Set)
 import qualified Data.Set as S
@@ -53,6 +53,10 @@ data Task = Task {
   , taskDirty :: TVar Bool
   -- | What has made the task dirty since the last render started
   , taskReasons :: TVar [Text]
+  -- | Where the last edit landed, until a quick render takes it
+  , taskEdit :: TVar (Maybe (FilePath, Position))
+  -- | The edit the last quick render answered, located again by the settle pass
+  , taskRenderedEdit :: TVar (Maybe (FilePath, Position))
   , taskPaused :: TVar Bool
   , taskResync :: TVar Bool
   , taskDeps :: TVar (Set FilePath)
@@ -103,9 +107,10 @@ handlers :: ServerEnv -> Handlers (LspM ())
 handlers env = mconcat [
   notificationHandler SMethod_Initialized $ \_ -> return ()
   , notificationHandler SMethod_TextDocumentDidOpen $ \msg ->
-      liftIO $ documentTouched env (msg ^. L.params . L.textDocument . L.uri) Nothing
+      liftIO $ documentTouched env (msg ^. L.params . L.textDocument . L.uri) Nothing Nothing
   , notificationHandler SMethod_TextDocumentDidChange $ \msg ->
       liftIO $ documentTouched env (msg ^. L.params . L.textDocument . L.uri) (Just (msg ^. L.params . L.textDocument . L.version))
+                                (lastEditPosition (msg ^. L.params . L.contentChanges))
   , notificationHandler SMethod_TextDocumentDidClose $ \_ -> return ()
   , notificationHandler SMethod_TextDocumentDidSave $ \_ -> return ()
   , notificationHandler SMethod_WorkspaceDidChangeConfiguration $ \_ -> return ()
@@ -122,8 +127,8 @@ handlers env = mconcat [
   ]
 
 -- An edit to a task's entry or to one of its dependencies means a render is due
-documentTouched :: ServerEnv -> Uri -> Maybe Int32 -> IO ()
-documentTouched env uri version = case uriToFilePath uri of
+documentTouched :: ServerEnv -> Uri -> Maybe Int32 -> Maybe Position -> IO ()
+documentTouched env uri version position = case uriToFilePath uri of
   Nothing -> return ()
   Just path -> do
     tasks <- M.elems <$> readTVarIO (envTasks env)
@@ -131,8 +136,13 @@ documentTouched env uri version = case uriToFilePath uri of
       deps <- readTVarIO (taskDeps task)
       when (path == taskEntryPath task) $
         forM_ version $ \v -> atomically (writeTVar (taskVersion task) (Just v))
-      when (path == taskEntryPath task || path `S.member` deps) $
+      when (path == taskEntryPath task || path `S.member` deps) $ do
+        forM_ position $ \pos -> atomically (writeTVar (taskEdit task) (Just (path, pos)))
         markDirty task [i|edit to #{takeFileName path}#{maybe "" (\v -> " (v" <> show v <> ")") version}|]
+
+-- | Where the last ranged change starts; Nothing for a whole-document replacement
+lastEditPosition :: [TextDocumentContentChangeEvent] -> Maybe Position
+lastEditPosition changes = listToMaybe [ partial ^. L.range . L.start | TextDocumentContentChangeEvent (InL partial) <- reverse changes ]
 
 executeCommand :: ServerEnv -> Text -> [Value] -> IO (Maybe Value)
 executeCommand env cmd args
@@ -154,6 +164,25 @@ executeCommand env cmd args
   | cmd == commandResync = withTaskArg $ \task -> do
       atomically (writeTVar (taskResync task) True)
       markDirty task "full output requested by the client"
+  | cmd == commandLocate = case args of
+      [v] | Success (LocateParams {..}) <- fromJSON v -> lookupTask locateTaskId >>= \case
+        Nothing -> return Nothing
+        Just task -> case uriToFilePath (Uri locateUri) of
+          Nothing -> bad [i|not a file uri: #{locateUri}|]
+          Just path -> locatePosition env task path (Position (fromIntegral locateLine) (fromIntegral locateCharacter)) >>= \case
+            Left err -> bad err
+            Right box -> return (toJSON <$> box)
+      _ -> bad "expected [LocateParams]"
+  | cmd == commandSourceAt = case args of
+      [v] | Success (SourceAtParams {..}) <- fromJSON v -> lookupTask sourceAtTaskId >>= \case
+        Nothing -> return Nothing
+        Just task -> case programLocate (envCommand env) of
+          Nothing -> return Nothing
+          Just exe -> sourceAt exe (taskEntryPath task) (taskWorkDir task) (taskFormat task) sourceAtPage sourceAtX sourceAtY >>= \case
+            Left err -> bad err
+            Right found -> return $ flip fmap found $ \(path, line, column) ->
+              toJSON (SourceLocation (getUri (filePathToUri path)) (max 0 (line - 1)) (max 0 (column - 1)))
+      _ -> bad "expected [SourceAtParams]"
   | otherwise = bad [i|unknown command #{cmd}|]
   where
     bad :: Text -> IO a
@@ -186,7 +215,7 @@ startTask env (StartParams {..}) = do
   let options = M.insert "format" startFormat (M.union startOptions (envDefaultOptions env))
   task <- Task startTaskId path (toNormalizedUri (Uri startUri)) options
             (fromMaybe 100 startDebounceMs) epoch workDir
-            <$> newTVarIO True <*> newTVarIO ["task started"] <*> newTVarIO False <*> newTVarIO False <*> newTVarIO (S.singleton path) <*> newTVarIO mempty
+            <$> newTVarIO True <*> newTVarIO ["task started"] <*> newTVarIO Nothing <*> newTVarIO Nothing <*> newTVarIO False <*> newTVarIO False <*> newTVarIO (S.singleton path) <*> newTVarIO mempty
             <*> newTVarIO Nothing <*> newTVarIO Nothing <*> newTVarIO 1 <*> newTVarIO Nothing
   atomically $ modifyTVar' (envTasks env) (M.insert startTaskId task)
   worker <- async (runWorker env task)
@@ -238,6 +267,12 @@ renderOnce :: ServerEnv -> Task -> Phase -> IO Bool
 renderOnce env task phase = do
   (entryText, version, overlays) <- snapshotBuffers env task
   reasons <- atomically (swapTVar (taskReasons task) [])
+  edit <- atomically $ case phase of
+    PhaseQuick -> do
+      e <- swapTVar (taskEdit task) Nothing
+      writeTVar (taskRenderedEdit task) e
+      return e
+    PhaseSettle -> readTVar (taskRenderedEdit task)
   let reason = case reasons of
         [] -> Nothing
         _ -> Just (T.intercalate ", " reasons)
@@ -287,7 +322,13 @@ renderOnce env task phase = do
       sendStatus env task StatusErrored phase reason (Just code) (Just ms) []
       return False
     Right (Right result) -> do
-      sent <- publish env task result (map fst overlays) version ms
+      position <- forM edit (uncurry (locatePosition env task)) >>= \case
+        Just (Left err) -> do
+          logLine [i|locating the edit in #{taskId task} failed: #{err}|]
+          return Nothing
+        Just (Right box) -> return box
+        Nothing -> return Nothing
+      sent <- publish env task result position (map fst overlays) version ms
       marker [i|#{label} done in #{showMs ms}: #{fromMaybe "output unchanged, nothing sent" sent}|]
       when (isJust sent) flush
       sendStatus env task StatusReady phase reason Nothing (Just ms) (resultTimings result)
@@ -297,6 +338,17 @@ hashFile :: FilePath -> IO (Maybe B.ByteString)
 hashFile path = doesFileExist path >>= \case
   False -> return Nothing
   True -> Just . SHA256.hash <$> B.readFile path
+
+-- | Where a zero-based source position landed in the last output; Nothing without a locate program
+locatePosition :: ServerEnv -> Task -> FilePath -> Position -> IO (Either Text (Maybe PageBox))
+locatePosition env task path (Position line character) = case programLocate (envCommand env) of
+  Nothing -> return (Right Nothing)
+  Just exe -> do
+    source <- workPathFor (taskEntryPath task) (taskWorkDir task) path
+    locate exe (taskEntryPath task) (taskWorkDir task) (taskFormat task) source (fromIntegral line + 1) (fromIntegral character + 1)
+
+taskFormat :: Task -> Text
+taskFormat task = fromMaybe "" (M.lookup "format" (taskOptions task))
 
 showMs :: Double -> Text
 showMs ms = T.pack (show (round ms :: Int)) <> "ms"
@@ -323,8 +375,8 @@ snapshotBuffers env task = readTVarIO (envLsp env) >>= \case
 -- | Send the output, as a diff against the last one where possible, and say what was sent (Nothing
 -- when it was identical to the last one). The deps a client should watch on disk leave out the
 -- buffers it sends us itself.
-publish :: ServerEnv -> Task -> RenderResult -> [FilePath] -> Maybe Int32 -> Double -> IO (Maybe Text)
-publish env task (RenderResult {..}) overlayPaths version ms = do
+publish :: ServerEnv -> Task -> RenderResult -> Maybe PageBox -> [FilePath] -> Maybe Int32 -> Double -> IO (Maybe Text)
+publish env task (RenderResult {..}) position overlayPaths version ms = do
   resync <- atomically (swapTVar (taskResync task) False)
   lastOutput <- readTVarIO (taskLast task)
   encoded <- case lastOutput of
@@ -355,6 +407,7 @@ publish env task (RenderResult {..}) overlayPaths version ms = do
         , outputDeps = diskDeps
         , outputRenderMs = ms
         , outputTimings = resultTimings
+        , outputPosition = position
         }
       return $ Just $ case encoding of
         EncodingFull -> [i|sent the full #{B.length bytes}B output as render #{renderId}|]

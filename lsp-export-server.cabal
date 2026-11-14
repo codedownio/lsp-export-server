@@ -185,6 +185,7 @@ test-suite lsp-export-server-test
   other-modules:
       Spec
       Spec.Deps
+      Spec.Locate
       Spec.Protocol
       Spec.Server
       Spec.Xdelta
