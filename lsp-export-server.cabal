@@ -40,6 +40,10 @@ library
       Render.Command
       Render.Process
       Render.Server
+      Render.Server.Commands
+      Render.Server.Env
+      Render.Server.Publish
+      Render.Server.Worker
       Render.Xdelta
   other-modules:
       Paths_lsp_export_server
