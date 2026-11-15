@@ -13,9 +13,7 @@ import UnliftIO (IOException, SomeException, bracket, handle, race_, throwIO, wa
 import UnliftIO.Concurrent (threadDelay)
 
 
--- | Run a command in @cwd@ with the given environment, feeding each output line to the callback,
--- and return its exit code. The command runs in its own process group so that a cancellation
--- (an async exception here) ends the whole tree, latexmk's children included.
+-- | In its own process group, so cancelling ends the whole tree
 runCapturing :: FilePath -> [(String, String)] -> FilePath -> [String] -> (Bool -> T.Text -> IO ()) -> IO ExitCode
 runCapturing cwd env exe args onLine = do
   let cp = (proc exe args) {
@@ -42,7 +40,6 @@ runCapturing cwd env exe args onLine = do
   where
     pump h f = handle (\(_ :: IOException) -> return ()) $ forever $ T.hGetLine h >>= f
 
-    -- Only a process that is still running (we were cancelled) needs its group ended
     cleanup (_, mOut, mErr, ph) = do
       getProcessExitCode ph >>= \case
         Just _ -> return ()

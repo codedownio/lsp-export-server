@@ -61,8 +61,7 @@ tests = describe "locate" $ do
 main :: IO ()
 main = specMain tests
 
--- | Forward: the line as the page, which of the work directory's copies the source is as the left
--- edge, the column as the top. Inverse: line page, column 7, in the open buffer of inc.txt.
+-- | Forward answers page=line, left=1/2/3 for src/overlay/disk, top=column
 locateScript :: HasBaseContext context => ExampleT context IO FilePath
 locateScript = do
   Just dir <- getCurrentFolder

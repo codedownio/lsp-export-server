@@ -51,19 +51,14 @@ data Task = Task {
   , taskEpoch :: Integer
   , taskWorkDir :: FilePath
   , taskDirty :: TVar Bool
-  -- | What has made the task dirty since the last render started
   , taskReasons :: TVar [Text]
-  -- | Where the last edit landed, until a quick render takes it
   , taskEdit :: TVar (Maybe (FilePath, Position))
-  -- | The edit the last quick render answered, located again by the settle pass
   , taskRenderedEdit :: TVar (Maybe (FilePath, Position))
   , taskPaused :: TVar Bool
   , taskResync :: TVar Bool
   , taskDeps :: TVar (Set FilePath)
-  -- | Content hashes of the on-disk dependencies as of the last render
   , taskDepHashes :: TVar (Map FilePath (Maybe B.ByteString))
   , taskVersion :: TVar (Maybe Int32)
-  -- | The last output announced: its render id and bytes, the base for the next diff
   , taskLast :: TVar (Maybe (Int, B.ByteString))
   , taskNextRenderId :: TVar Int
   , taskWorker :: TVar (Maybe (Async ()))
@@ -77,7 +72,6 @@ data ServerEnv = ServerEnv {
   , envLsp :: TVar (Maybe (LanguageContextEnv ()))
   }
 
--- | Serve on stdio until the client exits us. Returns the exit code.
 runRenderServer :: Programs -> FilePath -> Map Text Text -> IO Int
 runRenderServer command workRoot defaultOpts = do
   env <- ServerEnv command workRoot defaultOpts <$> newTVarIO mempty <*> newTVarIO Nothing
@@ -115,7 +109,7 @@ handlers env = mconcat [
   , notificationHandler SMethod_TextDocumentDidSave $ \_ -> return ()
   , notificationHandler SMethod_WorkspaceDidChangeConfiguration $ \_ -> return ()
   , notificationHandler SMethod_CancelRequest $ \_ -> return ()
-  -- The lsp library always advertises semantic tokens; answer with nothing rather than an error
+  -- lsp always advertises semantic tokens
   , requestHandler SMethod_TextDocumentSemanticTokensFull $ \_ respond -> respond (Right (InR Null))
   , requestHandler SMethod_WorkspaceExecuteCommand $ \req respond -> do
       let args = fromMaybe [] (req ^. L.params . L.arguments)
@@ -126,7 +120,6 @@ handlers env = mconcat [
         Right (Just v) -> Right (InL v)
   ]
 
--- An edit to a task's entry or to one of its dependencies means a render is due
 documentTouched :: ServerEnv -> Uri -> Maybe Int32 -> Maybe Position -> IO ()
 documentTouched env uri version position = case uriToFilePath uri of
   Nothing -> return ()
@@ -140,7 +133,6 @@ documentTouched env uri version position = case uriToFilePath uri of
         forM_ position $ \pos -> atomically (writeTVar (taskEdit task) (Just (path, pos)))
         markDirty task [i|edit to #{takeFileName path}#{maybe "" (\v -> " (v" <> show v <> ")") version}|]
 
--- | Where the last ranged change starts; Nothing for a whole-document replacement
 lastEditPosition :: [TextDocumentContentChangeEvent] -> Maybe Position
 lastEditPosition changes = listToMaybe [ partial ^. L.range . L.start | TextDocumentContentChangeEvent (InL partial) <- reverse changes ]
 
@@ -151,7 +143,6 @@ executeCommand env cmd args
       _ -> bad "expected [StartParams]"
   | cmd == commandStop = withTaskArg $ \task -> stopTask env task
   | cmd == commandRebuild = withTaskArg $ \task -> do
-      -- A rebuild is only worth doing when some dependency's content actually changed
       known <- readTVarIO (taskDepHashes task)
       changed <- filterM (\(path, h) -> (/= h) <$> hashFile path) (M.toList known)
       case changed of
@@ -235,8 +226,6 @@ stopTask env task = do
     False -> return ()
   logLine [i|stopped task #{taskId task}|]
 
--- Render whenever the task is dirty and unpaused: a quick pass once edits go quiet for the
--- debounce period, then a settling build once they go quiet for longer.
 runWorker :: ServerEnv -> Task -> IO ()
 runWorker env task = forever $ do
   atomically $ do
@@ -262,7 +251,7 @@ runWorker env task = forever $ do
 settleQuietMs :: Int
 settleQuietMs = 1500
 
--- | One render of the current buffers. False when it was superseded by an edit or failed.
+-- | False when superseded by an edit or failed
 renderOnce :: ServerEnv -> Task -> Phase -> IO Bool
 renderOnce env task phase = do
   (entryText, version, overlays) <- snapshotBuffers env task
@@ -279,7 +268,7 @@ renderOnce env task phase = do
   let label = case phase of
         PhaseQuick -> "quick render" :: Text
         PhaseSettle -> "settle pass"
-  -- The settle pass stays out of the log unless it fails or changes the output
+  -- The settle pass logs only when it fails or changes the output
   buffered <- newTVarIO ([] :: [(LogStream, Text)])
   let logFn stream text = case phase of
         PhaseQuick -> sendLog env task stream text False
@@ -339,7 +328,6 @@ hashFile path = doesFileExist path >>= \case
   False -> return Nothing
   True -> Just . SHA256.hash <$> B.readFile path
 
--- | Where a zero-based source position landed in the last output; Nothing without a locate program
 locatePosition :: ServerEnv -> Task -> FilePath -> Position -> IO (Either Text (Maybe PageBox))
 locatePosition env task path (Position line character) = case programLocate (envCommand env) of
   Nothing -> return (Right Nothing)
@@ -372,9 +360,7 @@ snapshotBuffers env task = readTVarIO (envLsp env) >>= \case
       text <- T.readFile (taskEntryPath task)
       return (text, Nothing, [])
 
--- | Send the output, as a diff against the last one where possible, and say what was sent (Nothing
--- when it was identical to the last one). The deps a client should watch on disk leave out the
--- buffers it sends us itself.
+-- | Nothing when the output is unchanged
 publish :: ServerEnv -> Task -> RenderResult -> Maybe PageBox -> [FilePath] -> Maybe Int32 -> Double -> IO (Maybe Text)
 publish env task (RenderResult {..}) position overlayPaths version ms = do
   resync <- atomically (swapTVar (taskResync task) False)
