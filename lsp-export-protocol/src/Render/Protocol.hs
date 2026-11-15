@@ -1,7 +1,5 @@
 {-# LANGUAGE DeriveGeneric #-}
 
--- The wire protocol between a render client (the codedown runner) and this server. Commands go
--- client -> server as workspace/executeCommand; results come back as custom notifications.
 module Render.Protocol (
   commandStart
   , commandStop
@@ -60,14 +58,12 @@ methodStatus = "codedown/render/status"
 methodOutput = "codedown/render/output"
 methodLog = "codedown/render/log"
 
--- Field names are the record field with its prefix dropped, lower-cased: startTaskId -> taskId
 fieldOptions :: Int -> Options
 fieldOptions n = defaultOptions {
   fieldLabelModifier = lowerFirst . drop n
   , omitNothingFields = True
   }
 
--- Constructor names with their prefix dropped, lower-cased: StatusReady -> ready
 tagOptions :: Int -> Options
 tagOptions n = defaultOptions { constructorTagModifier = map toLower . drop n }
 
@@ -97,7 +93,7 @@ newtype RebuildParams = RebuildParams {
 instance ToJSON RebuildParams where toJSON = genericToJSON (fieldOptions 7)
 instance FromJSON RebuildParams where parseJSON = genericParseJSON (fieldOptions 7)
 
--- | A source position, zero-based like LSP positions
+-- | Zero-based
 data LocateParams = LocateParams {
   locateTaskId :: Text
   , locateUri :: Text
@@ -107,7 +103,7 @@ data LocateParams = LocateParams {
 instance ToJSON LocateParams where toJSON = genericToJSON (fieldOptions 6)
 instance FromJSON LocateParams where parseJSON = genericParseJSON (fieldOptions 6)
 
--- | A point on a page of the last output: a one-based page and PDF points from its top-left corner
+-- | One-based page; PDF points from its top-left
 data SourceAtParams = SourceAtParams {
   sourceAtTaskId :: Text
   , sourceAtPage :: Int
@@ -117,7 +113,7 @@ data SourceAtParams = SourceAtParams {
 instance ToJSON SourceAtParams where toJSON = genericToJSON (fieldOptions 8)
 instance FromJSON SourceAtParams where parseJSON = genericParseJSON (fieldOptions 8)
 
--- | Zero-based like LSP positions
+-- | Zero-based
 data SourceLocation = SourceLocation {
   sourceUri :: Text
   , sourceLine :: Int
@@ -126,7 +122,7 @@ data SourceLocation = SourceLocation {
 instance ToJSON SourceLocation where toJSON = genericToJSON (fieldOptions 6)
 instance FromJSON SourceLocation where parseJSON = genericParseJSON (fieldOptions 6)
 
--- | A box on a page of the output: a one-based page, and PDF points from the page's top-left corner
+-- | One-based page; PDF points from its top-left
 data PageBox = PageBox {
   boxPage :: Int
   , boxLeft :: Double
@@ -149,7 +145,6 @@ data Status = StatusRendering | StatusReady | StatusErrored
 instance ToJSON Status where toJSON = genericToJSON (tagOptions 6)
 instance FromJSON Status where parseJSON = genericParseJSON (tagOptions 6)
 
--- | The quick pass runs right after the debounce; the settle pass follows once edits stay quiet
 data Phase = PhaseQuick | PhaseSettle
   deriving (Show, Eq, Generic)
 instance ToJSON Phase where toJSON = genericToJSON (tagOptions 5)
@@ -159,7 +154,6 @@ data StatusParams = StatusParams {
   statusTaskId :: Text
   , statusStatus :: Status
   , statusPhase :: Phase
-  -- | What made the render run, e.g. the edit it answers
   , statusReason :: Maybe Text
   , statusExitCode :: Maybe Int
   , statusRenderMs :: Maybe Double
@@ -192,7 +186,6 @@ data OutputParams = OutputParams {
   , outputDeps :: [FilePath]
   , outputRenderMs :: Double
   , outputTimings :: [Timing]
-  -- | Where the edit this render answers landed in the output
   , outputPosition :: Maybe PageBox
   } deriving (Show, Eq, Generic)
 instance ToJSON OutputParams where toJSON = genericToJSON (fieldOptions 6)

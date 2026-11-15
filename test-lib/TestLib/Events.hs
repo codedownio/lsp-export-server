@@ -42,7 +42,6 @@ classify = \case
       A.Success x -> f x
       A.Error _ -> EvOther
 
--- | The statuses and log lines up to the next output, and the output.
 untilOutput :: Session (ExampleT context IO) ([StatusParams], [LogParams], OutputParams)
 untilOutput = go [] []
   where
@@ -53,7 +52,6 @@ untilOutput = go [] []
       EvLog l -> go statuses (l : logs)
       EvOther -> go statuses logs
 
--- | The log lines up to the first status matching the predicate, and that status.
 untilStatus :: (StatusParams -> Bool) -> Session (ExampleT context IO) ([LogParams], StatusParams)
 untilStatus p = go []
   where

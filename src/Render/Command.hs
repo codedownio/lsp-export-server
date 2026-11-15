@@ -36,10 +36,6 @@ import UnliftIO (Exception, throwIO)
 import UnliftIO.Temporary (withTempFile)
 
 
--- | The programs that render: one for the quick pass after each edit, and optionally one for the
--- settle pass once edits stay quiet. Each runs in the document's directory with the layout and
--- options in @RENDER_*@ variables and must write @RENDER_OUTPUT@. The optional locate program maps
--- between source positions and places in the last output.
 data Programs = Programs {
   programRender :: FilePath
   , programSettle :: Maybe FilePath
@@ -47,17 +43,13 @@ data Programs = Programs {
   }
 
 data RenderRequest = RenderRequest {
-  -- | The real document, as an absolute path; the render's working directory is its directory
   requestEntryPath :: FilePath
   , requestEntryText :: Text
-  -- | Other open buffers (absolute real paths) that take priority over their disk copies
   , requestOverlays :: [(FilePath, Text)]
-  -- | Private scratch space for this task, kept across renders
   , requestWorkDir :: FilePath
   , requestOptions :: Map Text Text
-  -- | The settle pass rather than the quick one
   , requestSettle :: Bool
-  -- | Unix time for the output's timestamps, kept fixed so unchanged input gives unchanged bytes
+  -- | Fixed, so unchanged input gives unchanged bytes
   , requestEpoch :: Integer
   , requestLog :: LogStream -> Text -> IO ()
   }
@@ -65,7 +57,6 @@ data RenderRequest = RenderRequest {
 data RenderResult = RenderResult {
   resultFileName :: Text
   , resultBytes :: ByteString
-  -- | Absolute paths of every file read, excluding the scratch space and the Nix store
   , resultDeps :: [FilePath]
   , resultTimings :: [Timing]
   }
@@ -76,7 +67,6 @@ data RenderFailure = RenderFailure {
   } deriving (Show)
 instance Exception RenderFailure
 
--- | Lay out the work directory, run the pass's program and collect its output and dependencies.
 render :: Programs -> RenderRequest -> IO RenderResult
 render cmd req@(RenderRequest {..}) = do
   prepareWorkDir req
@@ -134,8 +124,6 @@ logStream = \case
   True -> LogStdout
   False -> LogStderr
 
--- | Lay out the work directory: the entry buffer under @src/@, the other open buffers under
--- @overlay/@ at their paths relative to the entry's directory, and an @out/@ for the output.
 prepareWorkDir :: RenderRequest -> IO ()
 prepareWorkDir (RenderRequest {..}) = do
   let srcDir = requestWorkDir </> "src"
@@ -153,9 +141,7 @@ prepareWorkDir (RenderRequest {..}) = do
       createDirectoryIfMissing True (takeDirectory (overlayDir </> rel))
       T.writeFile (overlayDir </> rel) text
 
--- | The files a render read, as the program reported them (absolute, or relative to the document's
--- directory): the work directory's copies mapped back to the documents they stand for, its other
--- files and the Nix store left out.
+-- | Work directory copies map back to their documents; other work files and the store are dropped
 mapDeps :: FilePath -> FilePath -> FilePath -> [FilePath] -> [FilePath]
 mapDeps entryDir entryPath workDir = nub . concatMap (classify . normalise . absolute)
   where
@@ -173,8 +159,6 @@ mapDeps entryDir entryPath workDir = nub . concatMap (classify . normalise . abs
       | normalise workDir `isPrefixOf` p = []
       | otherwise = [p]
 
--- | Run the locate program forward: a one-based line and column of a file, as the programs see it
--- (see 'workPathFor'), to the box it landed in. Nothing when the program finds no match.
 locate :: FilePath -> FilePath -> FilePath -> Text -> FilePath -> Int -> Int -> IO (Either Text (Maybe PageBox))
 locate exe entryPath workDir format source line column =
   fmap (>>= parseBox) <$> runLocate exe entryPath workDir format [
@@ -188,8 +172,6 @@ locate exe entryPath workDir format source line column =
       [page, left, top, width, height] -> PageBox <$> readMaybe page <*> readMaybe left <*> readMaybe top <*> readMaybe width <*> readMaybe height
       _ -> Nothing
 
--- | Run the locate program inverse: a one-based page and a point on it in PDF points from its
--- top-left corner, to the document, one-based line and column it came from.
 sourceAt :: FilePath -> FilePath -> FilePath -> Text -> Int -> Double -> Double -> IO (Either Text (Maybe (FilePath, Int, Int)))
 sourceAt exe entryPath workDir format page x y =
   fmap (>>= parseSource) <$> runLocate exe entryPath workDir format [
@@ -209,7 +191,6 @@ sourceAt exe entryPath workDir format page x y =
         p -> listToMaybe (mapDeps (takeDirectory entryPath) entryPath workDir [T.unpack p])
       return (source, line', column')
 
--- | The first line the locate program wrote to @RENDER_RESULT@, if any
 runLocate :: FilePath -> FilePath -> FilePath -> Text -> [(String, String)] -> IO (Either Text (Maybe Text))
 runLocate exe entryPath workDir format query = withTempFile workDir "located" $ \resultFile h -> do
   hClose h
@@ -232,8 +213,6 @@ runLocate exe entryPath workDir format query = withTempFile workDir "located" $ 
       return (Left [i|#{takeFileName exe} exited with code #{n}: #{T.intercalate " / " lastLines}|])
     ExitSuccess -> Right . listToMaybe . filter (not . T.null) . T.lines <$> T.readFile resultFile
 
--- | Where the programs see a document: the entry's copy under @src/@, an open buffer's under
--- @overlay/@ when the last render wrote one, and any other file at its own path.
 workPathFor :: FilePath -> FilePath -> FilePath -> IO FilePath
 workPathFor entryPath workDir path
   | path == entryPath = return (workDir </> "src" </> takeFileName entryPath)
