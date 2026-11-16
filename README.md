@@ -51,10 +51,10 @@ LaTeX. It runs in the document's directory with `RENDER_DOCUMENT`, `RENDER_JOB`,
 | `RENDER_QUERY` | `forward` or `inverse` |
 | `RENDER_SOURCE`, `RENDER_LINE`, `RENDER_COLUMN` | forward: the file as the render program saw it (the copy under `RENDER_WORK` for a buffer), and a one-based line and column |
 | `RENDER_PAGE`, `RENDER_X`, `RENDER_Y` | inverse: a one-based page, and a point on it in PDF points from its top-left corner |
-| `RENDER_RESULT` | where to write the answer, one line: `page left top width height` for forward, in the same units; `line column file` for inverse, one-based. Nothing when there is no match |
+| `RENDER_RESULT` | where to write the answer: for forward, one `page left top width height` line per box the source covers, in the same units; for inverse, one `line column file` line, one-based. Nothing when there is no match |
 
-After each render that follows an edit, the server locates the edit and sends the box with the
-output as `position`. The `locate` and `sourceAt` commands answer the same queries for the client,
+After each render that follows an edit, the server locates the edit and sends the boxes with the
+output as `positions`. The `locate` and `sourceAt` commands answer the same queries for the client,
 from the last render. Files under `RENDER_WORK` in an inverse answer are mapped back to the
 documents they stand for, as with `RENDER_DEPS`.
 
