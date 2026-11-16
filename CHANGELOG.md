@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.2.0
+
+- A forward locate answers with every box the source position covers, one line each. Outputs carry
+  them as `positions` (replacing `position`, and left out when there are none), and
+  `codedown.render.locate` returns a list.
+
 ## 0.1.1.0
 
 - `--locate EXE` names an optional program that maps source positions to places in the output and
