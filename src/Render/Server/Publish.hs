@@ -21,8 +21,8 @@ import UnliftIO.STM
 
 
 -- | Nothing when the output is unchanged
-publish :: ServerEnv -> Task -> RenderResult -> Maybe PageBox -> [FilePath] -> Maybe Int32 -> Double -> IO (Maybe Text)
-publish env task (RenderResult {..}) position overlayPaths version ms = do
+publish :: ServerEnv -> Task -> RenderResult -> [PageBox] -> [FilePath] -> Maybe Int32 -> Double -> IO (Maybe Text)
+publish env task (RenderResult {..}) positions overlayPaths version ms = do
   resync <- atomically (swapTVar (taskResync task) False)
   lastOutput <- readTVarIO (taskLast task)
   encoded <- case lastOutput of
@@ -53,7 +53,7 @@ publish env task (RenderResult {..}) position overlayPaths version ms = do
         , outputDeps = diskDeps
         , outputRenderMs = ms
         , outputTimings = resultTimings
-        , outputPosition = position
+        , outputPositions = case positions of { [] -> Nothing; ps -> Just ps }
         }
       return $ Just $ case encoding of
         EncodingFull -> [i|sent the full #{B.length bytes}B output as render #{renderId}|]

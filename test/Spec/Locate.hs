@@ -27,8 +27,8 @@ tests = describe "locate" $ do
       (_, _, second) <- untilOutput
       return (first, second)
 
-    outputPosition first `shouldBe` Nothing
-    outputPosition second `shouldBe` Just (PageBox 1 1 5 100 10)
+    outputPositions first `shouldBe` Nothing
+    outputPositions second `shouldBe` Just [PageBox 1 1 5 100 10, PageBox 1 1 20 50 10]
 
   it "sends no position without a locate program" $ do
     (docDir, script) <- setupDocument
@@ -39,7 +39,7 @@ tests = describe "locate" $ do
       (_, _, out) <- untilOutput
       return out
 
-    outputPosition out `shouldBe` Nothing
+    outputPositions out `shouldBe` Nothing
 
   it "answers locate and sourceAt from the last render, through the work directory's paths" $ do
     (docDir, script) <- setupDocument
@@ -55,13 +55,13 @@ tests = describe "locate" $ do
       source <- executeResult commandSourceAt [toJSON (SourceAtParams "t1" 3 10 20)]
       return (inEntry, inOverlay, inDisk, source)
 
-    (fromJSON inEntry, fromJSON inOverlay, fromJSON inDisk) `shouldBe` (A.Success (PageBox 3 1 1 100 10), A.Success (PageBox 3 2 1 100 10), A.Success (PageBox 3 3 1 100 10))
+    (fromJSON inEntry, fromJSON inOverlay, fromJSON inDisk) `shouldBe` (A.Success [PageBox 3 1 1 100 10, PageBox 3 1 20 50 10], A.Success [PageBox 3 2 1 100 10, PageBox 3 1 20 50 10], A.Success [PageBox 3 3 1 100 10, PageBox 3 1 20 50 10])
     fromJSON source `shouldBe` A.Success (SourceLocation (uriOf (docDir </> "inc.txt")) 2 6)
 
 main :: IO ()
 main = specMain tests
 
--- | Forward answers page=line, left=1/2/3 for src/overlay/disk, top=column
+-- | Forward answers page=line, left=1/2/3 for src/overlay/disk, top=column, and a second box
 locateScript :: HasBaseContext context => ExampleT context IO FilePath
 locateScript = do
   Just dir <- getCurrentFolder
@@ -76,7 +76,7 @@ locateScript = do
           "$RENDER_WORK"/overlay/*) kind=2 ;;
           *) kind=3 ;;
         esac
-        echo "$RENDER_LINE $kind $RENDER_COLUMN 100 10" > "$RENDER_RESULT" ;;
+        printf '%s\n' "$RENDER_LINE $kind $RENDER_COLUMN 100 10" "$RENDER_LINE 1 20 50 10" > "$RENDER_RESULT" ;;
       inverse)
         echo "$RENDER_PAGE 7 $RENDER_WORK/overlay/inc.txt" > "$RENDER_RESULT" ;;
     esac

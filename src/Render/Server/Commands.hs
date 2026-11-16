@@ -49,7 +49,7 @@ executeCommand env cmd args
           Nothing -> bad [i|not a file uri: #{locateUri}|]
           Just path -> locatePosition env task path (Position (fromIntegral locateLine) (fromIntegral locateCharacter)) >>= \case
             Left err -> bad err
-            Right box -> return (toJSON <$> box)
+            Right boxes -> return (Just (toJSON boxes))
       _ -> bad "expected [LocateParams]"
   | cmd == commandSourceAt = case args of
       [v] | Success (SourceAtParams {..}) <- fromJSON v -> lookupTask sourceAtTaskId >>= \case

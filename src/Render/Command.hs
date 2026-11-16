@@ -18,7 +18,7 @@ import Data.IORef
 import Data.List (isPrefixOf, nub)
 import Data.Map (Map)
 import qualified Data.Map as M
-import Data.Maybe (fromMaybe, listToMaybe)
+import Data.Maybe (fromMaybe, listToMaybe, mapMaybe)
 import Data.String.Interpolate
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -159,9 +159,9 @@ mapDeps entryDir entryPath workDir = nub . concatMap (classify . normalise . abs
       | normalise workDir `isPrefixOf` p = []
       | otherwise = [p]
 
-locate :: FilePath -> FilePath -> FilePath -> Text -> FilePath -> Int -> Int -> IO (Either Text (Maybe PageBox))
+locate :: FilePath -> FilePath -> FilePath -> Text -> FilePath -> Int -> Int -> IO (Either Text [PageBox])
 locate exe entryPath workDir format source line column =
-  fmap (>>= parseBox) <$> runLocate exe entryPath workDir format [
+  fmap (mapMaybe parseBox) <$> runLocate exe entryPath workDir format [
     ("RENDER_QUERY", "forward")
     , ("RENDER_SOURCE", source)
     , ("RENDER_LINE", show line)
@@ -174,7 +174,7 @@ locate exe entryPath workDir format source line column =
 
 sourceAt :: FilePath -> FilePath -> FilePath -> Text -> Int -> Double -> Double -> IO (Either Text (Maybe (FilePath, Int, Int)))
 sourceAt exe entryPath workDir format page x y =
-  fmap (>>= parseSource) <$> runLocate exe entryPath workDir format [
+  fmap (listToMaybe . mapMaybe parseSource) <$> runLocate exe entryPath workDir format [
     ("RENDER_QUERY", "inverse")
     , ("RENDER_PAGE", show page)
     , ("RENDER_X", show x)
@@ -191,7 +191,7 @@ sourceAt exe entryPath workDir format page x y =
         p -> listToMaybe (mapDeps (takeDirectory entryPath) entryPath workDir [T.unpack p])
       return (source, line', column')
 
-runLocate :: FilePath -> FilePath -> FilePath -> Text -> [(String, String)] -> IO (Either Text (Maybe Text))
+runLocate :: FilePath -> FilePath -> FilePath -> Text -> [(String, String)] -> IO (Either Text [Text])
 runLocate exe entryPath workDir format query = withTempFile workDir "located" $ \resultFile h -> do
   hClose h
   let job = dropExtension (takeFileName entryPath)
@@ -211,7 +211,7 @@ runLocate exe entryPath workDir format query = withTempFile workDir "located" $ 
     ExitFailure n -> do
       lastLines <- reverse . take 5 <$> readIORef logs
       return (Left [i|#{takeFileName exe} exited with code #{n}: #{T.intercalate " / " lastLines}|])
-    ExitSuccess -> Right . listToMaybe . filter (not . T.null) . T.lines <$> T.readFile resultFile
+    ExitSuccess -> Right . filter (not . T.null) . T.lines <$> T.readFile resultFile
 
 workPathFor :: FilePath -> FilePath -> FilePath -> IO FilePath
 workPathFor entryPath workDir path

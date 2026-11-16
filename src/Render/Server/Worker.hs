@@ -111,21 +111,21 @@ renderOnce env task phase = do
       sendStatus env task StatusErrored phase reason (Just code) (Just ms) []
       return False
     Right (Right result) -> do
-      position <- forM edit (uncurry (locatePosition env task)) >>= \case
+      positions <- forM edit (uncurry (locatePosition env task)) >>= \case
         Just (Left err) -> do
           logLine [i|locating the edit in #{taskId task} failed: #{err}|]
-          return Nothing
-        Just (Right box) -> return box
-        Nothing -> return Nothing
-      sent <- publish env task result position (map fst overlays) version ms
+          return []
+        Just (Right boxes) -> return boxes
+        Nothing -> return []
+      sent <- publish env task result positions (map fst overlays) version ms
       marker [i|#{label} done in #{showMs ms}: #{fromMaybe "output unchanged, nothing sent" sent}|]
       when (isJust sent) flush
       sendStatus env task StatusReady phase reason Nothing (Just ms) (resultTimings result)
       return True
 
-locatePosition :: ServerEnv -> Task -> FilePath -> Position -> IO (Either Text (Maybe PageBox))
+locatePosition :: ServerEnv -> Task -> FilePath -> Position -> IO (Either Text [PageBox])
 locatePosition env task path (Position line character) = case programLocate (envCommand env) of
-  Nothing -> return (Right Nothing)
+  Nothing -> return (Right [])
   Just exe -> do
     source <- workPathFor (taskEntryPath task) (taskWorkDir task) path
     locate exe (taskEntryPath task) (taskWorkDir task) (taskFormat task) source (fromIntegral line + 1) (fromIntegral character + 1)

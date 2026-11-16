@@ -186,7 +186,7 @@ data OutputParams = OutputParams {
   , outputDeps :: [FilePath]
   , outputRenderMs :: Double
   , outputTimings :: [Timing]
-  , outputPosition :: Maybe PageBox
+  , outputPositions :: Maybe [PageBox]
   } deriving (Show, Eq, Generic)
 instance ToJSON OutputParams where toJSON = genericToJSON (fieldOptions 6)
 instance FromJSON OutputParams where parseJSON = genericParseJSON (fieldOptions 6)
